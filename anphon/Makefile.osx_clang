@@ -1,0 +1,51 @@
+.SUFFIXES: .h .cpp
+#-----------------------------------------------
+# Makefile for the program 'ANPHON'.
+# Please modify the variables properly.
+# We recommend to use Intel c++ compiler.
+#-----------------------------------------------
+
+# MPI version of clang++ with libomp installed via Homebrew
+MPICXX = mpic++
+CXXFLAGS = -O3 -std=c++11 -Xpreprocessor -fopenmp
+INCLUDE = -I../include -I$(HOME)/include -I/usr/local/opt/boost/include/ -I/usr/local/opt/eigen/include/eigen3/ -I/usr/local/opt/fftw/include/  -I/usr/local/opt/libomp/include/
+
+LINKER = ${MPICXX}
+
+## Mavericks
+#LDFLAGS = -framework vecLib
+## Yosemite and newer
+LDFLAGS = -framework Accelerate
+
+LAPACK = -llapack
+LIBS = ${LAPACK} -L/usr/local/lib/ -lfftw3 -L//usr/local/opt/libomp/lib/ -lomp
+
+#----------------------------------------------
+# General rules
+#----------------------------------------------
+
+.cpp.o:
+	${MPICXX} ${CXXFLAGS} ${INCLUDE} -c $<
+
+PROG = anphon
+
+CXXSRC = $(wildcard *.cpp)
+
+OBJS= ${CXXSRC:.cpp=.o}
+
+default: anphon
+
+all: ${PROG}
+
+anphon: ${OBJS}
+	${LINKER} ${LDFLAGS} -o $@ ${OBJS} ${LIBS}
+
+clean:
+	rm -f ${OBJS}
+
+.PHONY: clean
+
+depend:
+	gcc -MM *.cpp > .depend
+
+-include .depend
