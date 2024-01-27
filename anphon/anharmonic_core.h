@@ -106,6 +106,16 @@ public:
                                const std::complex<double> *const *const *evec_in,
                                double *ret);
 
+    void calc_damping_smearing_MC(const unsigned int ntemp,
+                               const double *temp_in,
+                               const double omega_in,
+                               const unsigned int ik_in,
+                               const unsigned int is_in,
+                               const KpointMeshUniform *kmesh_in,
+                               const double *const *eval_in,
+                               const std::complex<double> *const *const *evec_in,
+                               double *ret);
+
     void calc_damping_tetrahedron(const unsigned int ntemp,
                                   const double *temp_in,
                                   const double omega_in,

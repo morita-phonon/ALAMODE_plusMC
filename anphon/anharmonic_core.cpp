@@ -891,6 +891,381 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4) / static_cast<double>(nk);
 }
 
+void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
+                                           const double *temp_in,
+                                           const double omega_in,
+                                           const unsigned int ik_in,
+                                           const unsigned int is_in,
+                                           const KpointMeshUniform *kmesh_in,
+                                           const double *const *eval_in,
+                                           const std::complex<double> *const *const *evec_in,
+                                           double *ret)
+{
+    // This function returns the imaginary part of phonon self-energy 
+    // for the given frequency omega_in.
+    // Lorentzian or Gaussian smearing will be used.
+    // This version employs the crystal symmetry to reduce the computational cost
+
+    // use Monte-Carlo integration
+    // Monte-Carlo parameter is defined here (should be stored in monte-carlo class but not yet implemented)
+    int nsample;    //the number of sample point for MC integration
+    std::string method;
+    //method of MC calculation, "SIMPLE"(simple MC), 
+    //"SPS"(use important sampling based on SPS) 
+    //"WSPS"(use important sampling based on weighted SPS) 
+    int nrep_sample;  //the number of for-roops during sample generation
+    //since "SPS" has no temperature dependence, nrep_sample=1
+    //for "WSPS", nrep_sample=ntemp
+
+    // Monte-Carlo variables
+    double** rand_val;  //array of random values used for choosing sample point
+    //(should be sorted to efficient calculation), [id_temperature][id_sample]
+    double** v3_mc_arr; //calculated arr of V3, [id_temperature][id_sample]
+    double** calculated_v3_map;  //map of calculated v3, initialized as 0 and store calculated v3, [ik][isjs]
+    double*** map_mc;   //map for sample generation (should be ascending order for last dimention)
+    //[id_temperature][ik][isjs]
+    int*** sign_map_mc;   //sign of map_mc, [id_temperature][ik][isjs]
+    double** map_mc_ik;   //map for sample generation (should be ascending order for last dimention)
+    //[id_temperature][ik], each element contains sum_{k<=ik}(sum_{isjs}map_mc[][k][isjs])
+    int** sample_id_arr; //array of sample id, [id_temperature][id_sample]
+    double delta_tmp;    //delta part of scattering rate
+    double delta_acm;    //accumulation of delta_tmp
+    int mcid;            // < nsample
+    int ik_tmp, is_tmp;            //i
+    double rand_tmp;
+
+    const auto nk = kmesh_in->nk;
+    const auto ns = dynamical->neval;
+    const auto ns2 = ns * ns;
+    unsigned int i;
+    int ik;
+    unsigned int is, js;
+    unsigned int arr[3];
+
+    int k1, k2;
+
+    double T_tmp;
+    double n1, n2;
+    double omega_inner[2];
+
+    double multi;
+
+    for (i = 0; i < ntemp; ++i) ret[i] = 0.0;
+
+    double **v3_arr;
+    double ***delta_arr;
+    double ret_tmp;
+
+    double f1, f2;
+
+    const auto epsilon = integration->epsilon;
+
+    std::vector<KsListGroup> triplet;
+
+    kmesh_in->get_unique_triplet_k(ik_in,
+                                   symmetry->SymmList,
+                                   false,
+                                   false,
+                                   triplet);
+
+    const auto npair_uniq = triplet.size();
+
+    //allocate(v3_arr, npair_uniq, ns * ns);
+    allocate(delta_arr, npair_uniq, ns * ns, 2);
+
+    const auto knum = kmesh_in->kpoint_irred_all[ik_in][0].knum;
+    const auto knum_minus = kmesh_in->kindex_minus_xk[knum];
+#ifdef _OPENMP
+#pragma omp parallel for private(multi, arr, k1, k2, is, js, omega_inner)
+#endif
+    for (ik = 0; ik < npair_uniq; ++ik) {
+        multi = static_cast<double>(triplet[ik].group.size());
+
+        arr[0] = ns * knum_minus + is_in;
+
+        k1 = triplet[ik].group[0].ks[0];
+        k2 = triplet[ik].group[0].ks[1];
+
+        for (is = 0; is < ns; ++is) {
+            arr[1] = ns * k1 + is;
+            omega_inner[0] = eval_in[k1][is];
+
+            for (js = 0; js < ns; ++js) {
+                arr[2] = ns * k2 + js;
+                omega_inner[1] = eval_in[k2][js];
+
+                if (integration->ismear == 0) {
+                    delta_arr[ik][ns * is + js][0]
+                            = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                              - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                    delta_arr[ik][ns * is + js][1]
+                            = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                              - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                } else if (integration->ismear == 1) {
+                    delta_arr[ik][ns * is + js][0]
+                            = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                              - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                    delta_arr[ik][ns * is + js][1]
+                            = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                              - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                }
+            }
+        }
+    }
+
+    //map_mc generation
+    if(method=="SPS" || "WSPS"){
+        if(method=="WSPS"){
+            nrep_sample=ntemp;
+        }else if(method=="SPS"){
+            nrep_sample=1;
+        }
+        allocate(map_mc, nrep_sample, npair_uniq, ns * ns);
+        allocate(sign_map_mc, nrep_sample, npair_uniq, ns * ns);
+        allocate(map_mc_ik, nrep_sample, npair_uniq);
+        for (i = 0; i < nrep_sample; ++i) {
+            T_tmp = temp_in[i];
+#ifdef _OPENMP
+#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2, delta_acm, delta_tmp)
+#endif
+            for (ik = 0; ik < npair_uniq; ++ik) {
+                delta_acm=0;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                for (is = 0; is < ns; ++is) {
+                    omega_inner[0] = eval_in[k1][is];
+                    for (js = 0; js < ns; ++js) {
+                        // get n1 and n2
+                        // mode SPS does not need n1 and n2
+                        if(method=="SPS"){
+                            n1=1;
+                            n2=1;
+                        }else if(method=="WSPS"){ //mode "WSPS" needs n1 and n2
+                            omega_inner[1] = eval_in[k2][js];
+                            if (thermodynamics->classical) {
+                                f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                                f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                                n1 = f1 + f2;
+                                n2 = f1 - f2;
+                            } else {
+                                f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                                f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                                n1 = f1 + f2 + 1.0;
+                                n2 = f1 - f2;
+                            }
+                        }
+                        delta_tmp = (n1 * delta_arr[ik][ns * is + js][0]
+                                  - n2 * delta_arr[ik][ns * is + js][1]);
+                        //get absolute value of delta_tmp and store original sign
+                        if(delta_tmp<0){
+                            delta_tmp=-delta_tmp;
+                            sign_map_mc[i][ik][ns * is + js]=-1;
+                        }else{
+                            sign_map_mc[i][ik][ns * is + js]=1;
+                        }
+                        //accumulate delta element for each ik
+                        map_mc[i][ik][ns * is + js]=delta_acm+delta_tmp;
+                        delta_acm=delta_acm+delta_tmp;
+                    }
+                }
+                //get total accumulation of delta and store into map_mc_ik
+                map_mc_ik[i][ik]=delta_acm;
+            }
+        }
+        //finished temperature roop
+        //accumulate map_mc_ik
+        //start from 1 because map_mc_ik[i][0] is OK
+        for (ik = 1; ik < npair_uniq; ++ik) {
+            map_mc_ik[i][ik]=map_mc_ik[i][ik-1]+map_mc_ik[i][ik];
+        }
+
+        //get array of random value in range of (0 map_mc_ik[i][npair_uniq-1])
+        //map_mc_ik[i][npair_uniq-1] is total value of accumulation
+        //rand_val should be sorted
+        allocate(rand_val, nrep_sample, nsample);
+        //to be implemented
+
+        //search sample point
+        allocate(sample_id_arr, nrep_sample, nsample);
+#ifdef _OPENMP
+#pragma omp parallel for private(delta_acm, delta_tmp, mcid, T_tmp, ik_tmp, is_tmp, rand_tmp)
+#endif
+        for (i = 0; i < nrep_sample; ++i) {
+            T_tmp = temp_in[i];
+            ik_tmp=0;
+            is_tmp=0;
+            for(mcid=0;mcid<nsample;mcid++){
+                //find position of rand_val[i][mcid] from map_mc
+                //at first, find position of rand_val[i][mcid] from map_mc_ik
+                rand_tmp=rand_val[i][mcid];
+                while(1){
+                    if(map_mc_ik[i][ik_tmp] < rand_tmp){
+                        ik_tmp++;
+                        is_tmp=0;  //since ik is updated, is_tmp should restart from 0
+                        if(ik_tmp>=npair_uniq){
+                            std::cerr << "rand_val[" << mcid << "] is too large for map_mc_ik" << std::endl;
+                            std::exit(1);
+                        }
+                    }else{
+                        break;
+                    }
+                }
+                //check rand_val
+                if(mcid>0){
+                    if(rand_tmp<rand_val[i][mcid-1]){
+                        std::cerr << "rand_val[" << mcid << "] is not ascending order" << std::endl;
+                            std::exit(1);
+                    }
+                }
+                //find position of rand_tmp from map_mc[i][ik_tmp]
+                //note map_mc is accumulation only map_mc[i][ik_each]
+                //it requires this reduction:
+                if(ik_tmp != 0){
+                    rand_tmp=rand_tmp-map_mc_ik[i][ik_tmp-1];
+                }
+                //note map_mc_ik[i][-1]=0 due to it's definition
+
+                while(1){
+                    if(map_mc[i][ik_tmp][is_tmp] < rand_tmp){
+                        is_tmp++;
+                        if(is_tmp>=ns2){
+                            std::cerr << "rand_val[" << mcid << "] is too large for map_mc" << std::endl;
+                            std::exit(1);
+                        }
+                    }else{
+                        break;
+                    }
+                }
+
+                //now, ik_tmp and is_tmp are position of rand_val[i][mcid]
+                //store them into sample_id_arr
+                sample_id_arr[i][mcid]=ik_tmp*ns2+is_tmp;
+            }
+            //for-roop of mc_sample is finished
+        }
+        //calculate V3 and store it into v3_map
+        allocate(calculated_v3_map, npair_uniq, ns2);
+        //set zero
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+        for (ik = 0; ik < npair_uniq; ++ik) {
+            for (int ib = 0; ib < ns2; ++ib) {
+                calculated_v3_map[ik][ib]=0;
+            }
+        }
+
+        allocate(v3_mc_arr, nrep_sample, nsample);
+        for (i = 0; i < nrep_sample; ++i) {
+            for(mcid=0;mcid<nsample;mcid++){
+                ik=sample_id_arr[i][mcid]/ns2;
+                int ib=sample_id_arr[i][mcid]%ns2;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                is = ib / ns;
+                js = ib % ns;
+
+                arr[0] = ns * knum_minus + is_in;
+                arr[1] = ns * k1 + is;
+                arr[2] = ns * k2 + js;
+                //if v3 for ik and ib is not calculated
+                if(calculated_v3_map[ik][ib]==0){
+                    calculated_v3_map[ik][ib] = std::norm(V3(arr,
+                                            kmesh_in->xk,
+                                            eval_in,
+                                            evec_in,
+                                            phase_storage_dos)) * multi;
+                    v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                }else{
+                    v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                }
+            }
+        }
+
+        //now, v3 for all sample points are stored in v3_mc_arr
+        //start to calculate total scattering rate
+        for (i = 0; i < ntemp; ++i) {
+            T_tmp = temp_in[i];
+            ret_tmp = 0.0;
+#ifdef _OPENMP
+#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
+#endif
+            for(mcid=0;mcid<nsample;mcid++){
+                ik=sample_id_arr[i][mcid]/ns2;
+                int ib=sample_id_arr[i][mcid]%ns2;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                is = ib / ns;
+                js = ib % ns;
+                if(method=="WSPS"){
+                    //if probability function (WSPS) < 0, the value of ret_tmp should be reduced
+                    if(sign_map_mc[i][ik][ib]>0){
+                        ret_tmp += v3_mc_arr[i][mcid];
+                    }else{
+                        ret_tmp -= v3_mc_arr[i][mcid];
+                    }
+                }else if(method=="SPS"){
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+                    
+                    //since probability function(SPS) does not have linear correlation, 
+                    // v3 should be divided by probability function SPS
+                    // and WSPS is multiplied after that
+                    if(sign_map_mc[i][ik][ib]>0){
+                        ret_tmp += v3_mc_arr[i][mcid]
+                               * (n1 * delta_arr[ik][ns * is + js][0]
+                                  - n2 * delta_arr[ik][ns * is + js][1])
+                                  /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                    }else{
+                        ret_tmp -= v3_mc_arr[i][mcid]
+                               * (n1 * delta_arr[ik][ns * is + js][0]
+                                  - n2 * delta_arr[ik][ns * is + js][1])
+                                  /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                    }
+                }
+            }
+            //ret[i] = ret_tmp;
+            ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
+            //renormalization by volume of integration space
+            //note map_mc_ik[i][npair_uniq-1] is total volume (last term of accumulation)
+        }
+    }else{
+        std::cerr << "Monte-Carlo method " << method << " is not implemented yet" << std::endl;
+        std::exit(1);
+    }
+
+    //deallocate(v3_arr);
+    deallocate(delta_arr);
+    triplet.clear();
+
+    if(method=="SPS" || method=="WSPS"){
+        deallocate(map_mc);
+        deallocate(sign_map_mc);
+        deallocate(map_mc_ik);
+        deallocate(rand_val);
+        deallocate(sample_id_arr);
+        deallocate(calculated_v3_map);
+        deallocate(v3_mc_arr);
+    }
+
+    for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4) / static_cast<double>(nk);
+}
+
 void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
                                               const double *temp_in,
                                               const double omega_in,
