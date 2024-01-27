@@ -26,6 +26,8 @@ or http://opensource.org/licenses/mit-license.php for information.
 #include <algorithm>
 #include <vector>
 
+#include <random>
+
 #ifdef _OPENMP
 
 #include <omp.h>
@@ -918,6 +920,8 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
     //for "WSPS", nrep_sample=ntemp
 
     // Monte-Carlo variables
+    std::random_device rnd; 
+    std::mt19937_64 mt(rnd());
     double** rand_val;  //array of random values used for choosing sample point
     //(should be sorted to efficient calculation), [id_temperature][id_sample]
     double** v3_mc_arr; //calculated arr of V3, [id_temperature][id_sample]
@@ -1085,7 +1089,13 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
         //map_mc_ik[i][npair_uniq-1] is total value of accumulation
         //rand_val should be sorted
         allocate(rand_val, nrep_sample, nsample);
-        //to be implemented
+        std::uniform_real_distribution<> rand_gen(0, map_mc_ik[i][npair_uniq-1]);
+        for (i = 0; i < nrep_sample; ++i) {
+            for(mcid=0;mcid<nsample;mcid++){
+                rand_val[i][mcid]=rand_gen(mt);
+            }
+            std::sort(&rand_val[i][0],&rand_val[i][nsample-1]);
+        }
 
         //search sample point
         allocate(sample_id_arr, nrep_sample, nsample);
