@@ -22,6 +22,7 @@ put new variables in &general field: MC_METHOD and (SAMPLE or SAMPLE_DENSITY) is
   SAMPLE_DENSITY = ratio
 
 Refarences
+
 [1]Savić, I., Donadio, D., Gygi, F., & Galli, G. (2013). Dimensionality and heat transport in Si-Ge superlattices. Applied Physics Letters, 102(7), 073113. https://doi.org/10.1063/1.4792748
 
 [2]W. H. Press, S. A. Teukolsky, W. T. Vetterling, and B. P. Flannery,Numerical  Recipes:  The  Art  of  Scientific  Computing(CambridgeUniversity Press, Cambridge, U.K., 2007).
