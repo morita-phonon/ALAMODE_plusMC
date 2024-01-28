@@ -27,6 +27,7 @@ or http://opensource.org/licenses/mit-license.php for information.
 #include <vector>
 
 #include <random>
+#include <chrono>
 
 #ifdef _OPENMP
 
@@ -950,6 +951,11 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
     int ik_tmp, is_tmp;            //i
     double rand_tmp;
 
+    std::chrono::system_clock::time_point  start, now;
+    if (mympi->my_rank == 0) {
+        start = std::chrono::system_clock::now();
+    }
+
     const auto nk = kmesh_in->nk;
     const auto ns = dynamical->neval;
     const auto ns2 = ns * ns;
@@ -1027,6 +1033,12 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                 }
             }
         }
+    }
+
+    if (mympi->my_rank == 0) {
+        now = std::chrono::system_clock::now();
+        elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+        start = std::chrono::system_clock::now();
     }
 
     //map_mc generation
@@ -1176,6 +1188,12 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             }
             //for-roop of mc_sample is finished
         }
+
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
         //calculate V3 and store it into v3_map
         allocate(calculated_v3_map, npair_uniq, ns2);
         //set zero
@@ -1215,7 +1233,11 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                 }
             }
         }
-
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_V3 += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
         //now, v3 for all sample points are stored in v3_mc_arr
         //start to calculate total scattering rate
         for (i = 0; i < ntemp; ++i) {
@@ -1285,6 +1307,11 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             }
             //renormalization by volume of integration space
             //note map_mc_ik[i][npair_uniq-1] is total volume (last term of accumulation)
+        }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_other += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
         }
     }else{
         std::cerr << "Monte-Carlo method " << method << " is not implemented yet" << std::endl;

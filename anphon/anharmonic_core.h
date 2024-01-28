@@ -137,6 +137,13 @@ public:
     int integration_method;
     bool use_sample_density;
 
+    //var for time elapse
+    double elapsed_SPS;
+    double elapsed_sample;
+    double elapsed_V3;
+    double elapsed_other;
+    double elapsed_com;
+
     std::complex<double> V3(const unsigned int [3]);
 
     std::complex<double> V4(const unsigned int [4]);

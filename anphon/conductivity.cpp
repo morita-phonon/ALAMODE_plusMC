@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iomanip>
 #include <vector>
+#include <chrono>
 
 using namespace PHON_NS;
 
@@ -256,6 +257,13 @@ void Conductivity::calc_anharmonic_imagself()
     unsigned int *nks_thread = nullptr;
     double *damping3_loc = nullptr;
 
+    //initialize time elapsed
+    anharmonic_core->elapsed_com=0;
+    anharmonic_core->elapsed_SPS=0;
+    anharmonic_core->elapsed_sample=0;
+    anharmonic_core->elapsed_V3=0;
+    anharmonic_core->elapsed_other=0;
+
     // Distribute (k,s) to individual MPI threads
 
     const auto nks_g = vks_job.size();
@@ -368,16 +376,30 @@ void Conductivity::calc_anharmonic_imagself()
                                                           damping3_loc);
             }
         }
-
+        std::chrono::system_clock::time_point  start, now;
+        if (mympi->my_rank == 0) {
+            start = std::chrono::system_clock::now();
+        }
         MPI_Gather(&damping3_loc[0], ntemp, MPI_DOUBLE,
                    damping3[nshift_restart + i * mympi->nprocs], ntemp,
                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            anharmonic_core->elapsed_com += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
 
         if (mympi->my_rank == 0) {
             //if MC_integration is active, 
             //note that some message is already shown in function calc_damping_smearing_MC
             write_result_gamma(i, nshift_restart, vel, damping3);
-            std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
+            //std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
+            std::cout << " MODE " << std::setw(5) << i + 1 << ", SPS:"
+             << anharmonic_core->elapsed_SPS  << ", sample:" 
+             << anharmonic_core->elapsed_sample  << ", V3:" 
+             << anharmonic_core->elapsed_V3  << ", other:"
+             << anharmonic_core->elapsed_other  << ", com:"  
+             << anharmonic_core->elapsed_com << std::endl << std::flush;
         }
     }
     deallocate(damping3_loc);
