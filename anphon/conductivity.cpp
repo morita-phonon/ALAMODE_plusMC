@@ -287,6 +287,19 @@ void Conductivity::calc_anharmonic_imagself()
             std::cout << " RANK: " << std::setw(5) << i + 1;
             std::cout << std::setw(8) << "MODES: " << std::setw(5) << nks_thread[i] << std::endl;
         }
+        if(anharmonic_core->integration_method>0){
+            std::cout << std::endl;
+            std::cout << " Monte-Carlo integration is active : " << std::endl;
+            std::cout << "  Monte-Carlo integration mode is " << anharmonic_core->integration_method
+             << std::endl;
+            std::cout << "  Sample type is ";
+            if(anharmonic_core->use_sample_density){
+                std::cout << "density : " << anharmonic_core->sample_density*100
+                 << "%" << std::endl;
+            }else{
+                std::cout << "number : " << anharmonic_core->nsample_input << std::endl;
+            }
+        }
         std::cout << std::endl << std::flush;
 
         deallocate(nks_thread);
@@ -322,7 +335,8 @@ void Conductivity::calc_anharmonic_imagself()
             const auto omega = dos->dymat_dos->get_eigenvalues()[knum][snum];
 
             if (integration->ismear == 0 || integration->ismear == 1) {
-                anharmonic_core->calc_damping_smearing(ntemp,
+                if(anharmonic_core->integration_method<=0){
+                    anharmonic_core->calc_damping_smearing(ntemp,
                                                        temperature,
                                                        omega,
                                                        iks / ns,
@@ -331,6 +345,17 @@ void Conductivity::calc_anharmonic_imagself()
                                                        dos->dymat_dos->get_eigenvalues(),
                                                        dos->dymat_dos->get_eigenvectors(),
                                                        damping3_loc);
+                }else{
+                    anharmonic_core->calc_damping_smearing_MC(ntemp,
+                                                       temperature,
+                                                       omega,
+                                                       iks / ns,
+                                                       snum,
+                                                       dos->kmesh_dos,
+                                                       dos->dymat_dos->get_eigenvalues(),
+                                                       dos->dymat_dos->get_eigenvectors(),
+                                                       damping3_loc);
+                }
             } else if (integration->ismear == -1) {
                 anharmonic_core->calc_damping_tetrahedron(ntemp,
                                                           temperature,
@@ -349,6 +374,8 @@ void Conductivity::calc_anharmonic_imagself()
                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
         if (mympi->my_rank == 0) {
+            //if MC_integration is active, 
+            //note that some message is already shown in function calc_damping_smearing_MC
             write_result_gamma(i, nshift_restart, vel, damping3);
             std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
         }

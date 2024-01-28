@@ -111,7 +111,8 @@ void Input::parse_general_vars()
             "TMIN", "TMAX", "DT", "NBANDS", "NONANALYTIC", "BORNINFO", "NA_SIGMA",
             "ISMEAR", "EPSILON", "EMIN", "EMAX", "DELTA_E", "RESTART",  // "TREVSYM",
             "NKD", "KD", "MASS", "TRISYM", "PREC_EWALD", "CLASSICAL", "BCONNECT", "BORNSYM",
-            "VERBOSITY"
+            "VERBOSITY",
+            "MC_METHOD","SAMPLE","SAMPLE_DENSITY"
     };
 
     std::vector<std::string> no_defaults{"PREFIX", "MODE", "FCSXML", "NKD", "KD"};
@@ -194,6 +195,11 @@ void Input::parse_general_vars()
     unsigned int bornsym = 0;
     unsigned int verbosity = 1;
 
+    unsigned int mc_method=0;
+    unsigned int nsample=5000;
+    double sample_density=-1;  //if this variable is below 0 or over 1, use_sample_density is false
+    bool use_sample_density=false;
+
     auto prec_ewald = 1.0e-12;
 
     // if file_result exists in the current directory,
@@ -238,6 +244,17 @@ void Input::parse_general_vars()
     assign_val(use_triplet_symmetry, "TRISYM", general_var_dict);
     assign_val(bornsym, "BORNSYM", general_var_dict);
     assign_val(verbosity, "VERBOSITY", general_var_dict);
+
+    assign_val(mc_method, "MC_METHOD", general_var_dict);
+    if(mc_method>0){
+        assign_val(nsample, "SAMPLE", general_var_dict);
+        assign_val(sample_density, "SAMPLE_DENSITY", general_var_dict);
+        if(sample_density < 0 || sample_density > 1){
+            use_sample_density=false;
+        }else{
+            use_sample_density=true;
+        }
+    }
 
     if (band_connection > 2) {
         exit("parse_general_vars", "BCONNECT-tag can take 0, 1, or 2.");
@@ -324,6 +341,18 @@ void Input::parse_general_vars()
     thermodynamics->classical = classical;
     integration->ismear = ismear;
     anharmonic_core->use_triplet_symmetry = use_triplet_symmetry;
+
+    if(mc_method>0){
+        if(mc_method>=1 && mc_method<4){
+            anharmonic_core->integration_method=mc_method;
+        }else{
+            std::cerr << "MC_METHOD " << mc_method << " is not implemented yet" << std::endl;
+            std::exit(1);
+        }
+        anharmonic_core->nsample_input=nsample;
+        anharmonic_core->sample_density=sample_density;
+        anharmonic_core->use_sample_density=use_sample_density;
+    }
 
     general_var_dict.clear();
 }

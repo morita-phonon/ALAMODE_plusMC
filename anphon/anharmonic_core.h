@@ -131,6 +131,12 @@ public:
     bool use_triplet_symmetry;
     bool use_quartet_symmetry;
 
+    //variables for monte-carlo integration
+    int nsample_input;
+    double sample_density;
+    int integration_method;
+    bool use_sample_density;
+
     std::complex<double> V3(const unsigned int [3]);
 
     std::complex<double> V4(const unsigned int [4]);
