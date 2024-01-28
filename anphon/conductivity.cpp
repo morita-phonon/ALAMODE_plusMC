@@ -395,13 +395,16 @@ void Conductivity::calc_anharmonic_imagself()
             //if MC_integration is active, 
             //note that some message is already shown in function calc_damping_smearing_MC
             write_result_gamma(i, nshift_restart, vel, damping3);
-            //std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
-            std::cout << " MODE " << std::setw(5) << i + 1 << ", SPS:"
-             << anharmonic_core->elapsed_SPS  << ", sample:" 
-             << anharmonic_core->elapsed_sample  << ", V3:" 
-             << anharmonic_core->elapsed_V3  << ", other:"
-             << anharmonic_core->elapsed_other  << ", com:"  
-             << anharmonic_core->elapsed_com << std::endl << std::flush;
+            if(anharmonic_core->integration_method<=0){
+                std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
+            }else{
+                std::cout << " MODE " << std::setw(5) << i + 1 << ", SPS:"
+                 << anharmonic_core->elapsed_SPS  << ", sample:" 
+                 << anharmonic_core->elapsed_sample  << ", V3:" 
+                 << anharmonic_core->elapsed_V3  << ", other:"
+                 << anharmonic_core->elapsed_other  << ", com:"  
+                 << anharmonic_core->elapsed_com << std::endl << std::flush;
+            }
         }
     }
     deallocate(damping3_loc);
