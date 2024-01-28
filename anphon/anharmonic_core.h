@@ -126,6 +126,16 @@ public:
                                   const std::complex<double> *const *const *evec_in,
                                   double *ret);
 
+    void calc_damping_tetrahedron_MC(const unsigned int ntemp,
+                                  const double *temp_in,
+                                  const double omega_in,
+                                  const unsigned int ik_in,
+                                  const unsigned int is_in,
+                                  const KpointMeshUniform *kmesh_in,
+                                  const double *const *eval_in,
+                                  const std::complex<double> *const *const *evec_in,
+                                  double *ret);
+
     int quartic_mode;
     bool use_tuned_ver;
     bool use_triplet_symmetry;

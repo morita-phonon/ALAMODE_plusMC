@@ -367,7 +367,8 @@ void Conductivity::calc_anharmonic_imagself()
                                                        damping3_loc);
                 }
             } else if (integration->ismear == -1) {
-                anharmonic_core->calc_damping_tetrahedron(ntemp,
+                if(anharmonic_core->integration_method<=0){
+                    anharmonic_core->calc_damping_tetrahedron(ntemp,
                                                           temperature,
                                                           omega,
                                                           iks / ns,
@@ -376,6 +377,17 @@ void Conductivity::calc_anharmonic_imagself()
                                                           dos->dymat_dos->get_eigenvalues(),
                                                           dos->dymat_dos->get_eigenvectors(),
                                                           damping3_loc);
+                }else{
+                    anharmonic_core->calc_damping_tetrahedron_MC(ntemp,
+                                                          temperature,
+                                                          omega,
+                                                          iks / ns,
+                                                          snum,
+                                                          dos->kmesh_dos,
+                                                          dos->dymat_dos->get_eigenvalues(),
+                                                          dos->dymat_dos->get_eigenvectors(),
+                                                          damping3_loc);
+                }
             }
         }
         std::chrono::system_clock::time_point  start, now;
