@@ -341,8 +341,9 @@ void Conductivity::calc_anharmonic_imagself()
             const auto snum = iks % ns;
 
             const auto omega = dos->dymat_dos->get_eigenvalues()[knum][snum];
-
+            
             if (integration->ismear == 0 || integration->ismear == 1) {
+                
                 if(anharmonic_core->integration_method<=0){
                     anharmonic_core->calc_damping_smearing(ntemp,
                                                        temperature,
@@ -354,6 +355,7 @@ void Conductivity::calc_anharmonic_imagself()
                                                        dos->dymat_dos->get_eigenvectors(),
                                                        damping3_loc);
                 }else{
+                    
                     anharmonic_core->calc_damping_smearing_MC(ntemp,
                                                        temperature,
                                                        omega,

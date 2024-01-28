@@ -106,6 +106,10 @@ void AnharmonicCore::setup()
     sym_permutation = true;
     use_tuned_ver = true;
     MPI_Bcast(&use_tuned_ver, 1, MPI_CXX_BOOL, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&nsample_input, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&sample_density, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&integration_method, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&use_sample_density, 1, MPI_CXX_BOOL, 0, MPI_COMM_WORLD);
 
     if (fcs_phonon->maxorder >= 2) setup_cubic();
     if (fcs_phonon->maxorder >= 3) setup_quartic();
