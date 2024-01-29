@@ -41,7 +41,7 @@ public:
     int calc_coherent;
 
     //store relative error of gamma
-    double **std_err;
+    double **rel_err;
 
 private:
     void set_default_variables();

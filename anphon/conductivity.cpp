@@ -63,8 +63,8 @@ void Conductivity::deallocate_variables()
     if (damping3) {
         deallocate(damping3);
     }
-    if (std_err) {
-        deallocate(std_err);
+    if (rel_err) {
+        deallocate(rel_err);
     }
     if (kappa) {
         deallocate(kappa);
@@ -108,10 +108,10 @@ void Conductivity::setup_kappa()
 
     if (nrem > 0) {
         allocate(damping3, (nks_each_thread + 1) * mympi->nprocs, ntemp);
-        allocate(std_err, (nks_each_thread + 1) * mympi->nprocs, ntemp);
+        allocate(rel_err, (nks_each_thread + 1) * mympi->nprocs, ntemp);
     } else {
         allocate(damping3, nks_total, ntemp);
-        allocate(std_err, nks_total, ntemp);
+        allocate(rel_err, nks_total, ntemp);
     }
 
     const auto factor = Bohr_in_Angstrom * 1.0e-10 / time_ry;
@@ -212,6 +212,33 @@ void Conductivity::prepare_restart()
                     }
                     vks_done.push_back(nks_tmp);
                 }
+            }
+
+            try {
+                double* err_calc_tmp;
+                allocate(err_calc_tmp,ntemp);
+                while (!writes->fs_err.eof()) {
+                    for (i = 0; i < ntemp; ++i) {
+                        writes->fs_err >> err_calc_tmp[i];  //read calculated error for each T
+                    }
+                    writes->fs_err >> line_tmp;  //dummy, #GAMMA_EACH
+                    writes->fs_err >> nk_tmp >> ns_tmp;
+                    const auto nks_tmp = (nk_tmp - 1) * ns + ns_tmp - 1;
+                    //for debug
+                    //std::cout << nk_tmp << " " << ns_tmp;
+                    for (i = 0; i < ntemp; ++i) {
+                        rel_err[nks_tmp][i]=err_calc_tmp[i];
+                        //for debug
+                        //std::cout << " " << rel_err[nks_tmp][i];
+                    }
+                    //for debug
+                    //std::cout << std::endl;
+                }
+                writes->fs_err.clear();
+                deallocate(err_calc_tmp);
+            }catch (...){
+                std::cerr << "error is detected in MC_err.log" << std::endl;
+                std::exit(1);
             }
         }
 
@@ -407,7 +434,7 @@ void Conductivity::calc_anharmonic_imagself()
                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
         
         MPI_Gather(&std_ret[0], ntemp, MPI_DOUBLE,
-                   std_err[nshift_restart + i * mympi->nprocs], ntemp,
+                   rel_err[nshift_restart + i * mympi->nprocs], ntemp,
                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
         if (mympi->my_rank == 0) {
@@ -423,7 +450,7 @@ void Conductivity::calc_anharmonic_imagself()
             if(anharmonic_core->integration_method<=0){
                 std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
             }else{
-                write_result_err(i, nshift_restart, vel, std_err);
+                write_result_err(i, nshift_restart, vel, rel_err);
                 //std::cout << anharmonic_core->std_ret[0];
                 std::cout << " MODE " << std::setw(5) << i + 1 << ", SPS:"
                  << anharmonic_core->elapsed_SPS  << ", sample:" 
@@ -492,7 +519,7 @@ void Conductivity::write_result_err(const unsigned int ik,
                               << ret_err[iks_g][k];
         }
 
-        writes->fs_err << "%" << "GAMMA_EACH  ";
+        writes->fs_err << " #" << "GAMMA_EACH  ";
         writes->fs_err << iks_g / ns + 1 << " " << iks_g % ns + 1 << std::endl;
     }
 }
@@ -671,6 +698,11 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
     const auto nk_irred = kmesh_in->nk_irred;
     allocate(kappa_mode, ntemp, 9, ns, nk_irred);
 
+    double ***kappa_err;
+    if(anharmonic_core->integration_method>0){
+        allocate(kappa_err,ntemp,3,3);
+    }
+
     for (i = 0; i < ntemp; ++i) {
         for (unsigned int j = 0; j < 3; ++j) {
             for (unsigned int k = 0; k < 3; ++k) {
@@ -714,13 +746,34 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
                 }
 
                 kappa_intra[i][j][k] = 0.0;
+                if(anharmonic_core->integration_method>0){
+                    kappa_err[i][j][k] = 0.0;
+                }
 
                 for (is = 0; is < ns; ++is) {
                     for (ik = 0; ik < nk_irred; ++ik) {
                         kappa_intra[i][j][k] += kappa_mode[i][3 * j + k][is][ik];
+                        if(anharmonic_core->integration_method>0){
+                            /*for debug*/
+                            //std::cout << "rel_err[" << ns * ik + is << "][" << i << "] = " << rel_err[ns * ik + is][i] << " ";
+                            //std::cout << "kappa_mode[" << is << "][" << ik << "] = " << kappa_mode[i][3 * j + k][is][ik] << std::endl;
+                            kappa_err[i][j][k] += rel_err[ns * ik + is][i]*rel_err[ns * ik + is][i]
+                                                    *kappa_mode[i][3 * j + k][is][ik]*kappa_mode[i][3 * j + k][is][ik];
+                                                    //variance of kappa_mode
+
+                            //kappa_err[i][j][k] += rel_err[ns * ik + is][i]*std::abs(kappa_mode[i][3 * j + k][is][ik]);
+                            // calculate simple summation of standard error 
+                            // when there is a bias, this estimation is more reasonable
+                        }
                     }
                 }
+                if(anharmonic_core->integration_method>0){
+                    kappa_err[i][j][k]=sqrt(kappa_err[i][j][k])/kappa_intra[i][j][k];
+                    // calculate relative deviation of kappa
 
+                    // kappa_err[i][j][k] = kappa_err[i][j][k]/kappa_intra[i][j][k];
+                    // calculate error due to bias
+                }
                 kappa_intra[i][j][k] /= static_cast<double>(nk);
             }
         }
@@ -737,6 +790,21 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
     }
 
     deallocate(kappa_mode);
+    if(anharmonic_core->integration_method>0){
+        std::cout << std::endl << "Thermal conductivity calculation is finished" << std::endl;
+        std::cout << " Estimated error sigma_err : " << std::endl;
+        std::cout << " T [K] |kxx       |kxy       |kxz       |kyx       |kyy       |kyz       |kzx       |kzy       |kzz [%]    " << std::endl;
+        for (i = 0; i < ntemp; ++i) {
+            std::cout << "  " << std::setw(6) << std::fixed << static_cast<int>(temperature[i]);
+            for (unsigned int j = 0; j < 3; ++j) {
+                for (unsigned int k = 0; k < 3; ++k) {
+                    std::cout << std::fixed << std::setw(11) << kappa_err[i][j][k]*100;
+                }
+            }
+            std::cout << std::endl;
+        }
+        deallocate(kappa_err);
+    }
 }
 
 void Conductivity::compute_kappa_coherent(const KpointMeshUniform *kmesh_in,

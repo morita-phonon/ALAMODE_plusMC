@@ -1308,10 +1308,13 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                 }
             }
             //ret[i] = ret_tmp;
-            if(ret_tmp < 1.0e-8){
+            if(ret_tmp < 1.0e-100){
                 ret_err[i]=0;
             }else{
-                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/ret_tmp;
+                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/(ret_tmp/nsample);
+                //ret_tmp/nsample is average
+                //sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0)) is standard error
+                //ret_err store relative error (standard_error / average of ret_tmp)
             }
              //calculation of relative standard error (error / value)
              //std_ret should be allocated before this function is called
@@ -1350,7 +1353,7 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4) / static_cast<double>(nk);
     
     if (mympi->my_rank == 0) {  //write number of total channel and calculated sample
-        std::cout << nsample << " / " << npair_uniq * ns2 << " channels. ";
+        std::cout << nsample << " / " << npair_uniq * ns2 << " irr. channels. ";
     }
 }
 
@@ -1972,10 +1975,13 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                 }
             }
             //ret[i] = ret_tmp;
-            if(ret_tmp < 1.0e-8){
+            if(ret_tmp < 1.0e-100){
                 ret_err[i]=0;
             }else{
-                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/ret_tmp;
+                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/(ret_tmp/nsample);
+                //ret_tmp/nsample is average
+                //sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0)) is standard error
+                //ret_err store relative error (standard_error / average of ret_tmp)
             }
              //calculation of relative standard error (error / value)
              //std_ret should be allocated before this function is called
@@ -2016,7 +2022,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4);
 
     if (mympi->my_rank == 0) {  //write number of total channel and calculated sample
-        std::cout << nsample << " / " << npair_uniq * ns2 << " channels. ";
+        std::cout << nsample << " / " << npair_uniq * ns2 << " irr. channels. ";
     }
 }
 
