@@ -63,6 +63,9 @@ void Conductivity::deallocate_variables()
     if (damping3) {
         deallocate(damping3);
     }
+    if (std_err) {
+        deallocate(std_err);
+    }
     if (kappa) {
         deallocate(kappa);
     }
@@ -105,8 +108,10 @@ void Conductivity::setup_kappa()
 
     if (nrem > 0) {
         allocate(damping3, (nks_each_thread + 1) * mympi->nprocs, ntemp);
+        allocate(std_err, (nks_each_thread + 1) * mympi->nprocs, ntemp);
     } else {
         allocate(damping3, nks_total, ntemp);
+        allocate(std_err, nks_total, ntemp);
     }
 
     const auto factor = Bohr_in_Angstrom * 1.0e-10 / time_ry;
@@ -256,6 +261,7 @@ void Conductivity::calc_anharmonic_imagself()
     unsigned int i;
     unsigned int *nks_thread = nullptr;
     double *damping3_loc = nullptr;
+    double *std_ret = nullptr;
 
     //initialize time elapsed
     anharmonic_core->elapsed_com=0;
@@ -326,6 +332,7 @@ void Conductivity::calc_anharmonic_imagself()
     }
 
     allocate(damping3_loc, ntemp);
+    allocate(std_ret,ntemp);
 
     for (i = 0; i < nk_tmp; ++i) {
 
@@ -355,7 +362,6 @@ void Conductivity::calc_anharmonic_imagself()
                                                        dos->dymat_dos->get_eigenvectors(),
                                                        damping3_loc);
                 }else{
-                    
                     anharmonic_core->calc_damping_smearing_MC(ntemp,
                                                        temperature,
                                                        omega,
@@ -364,7 +370,8 @@ void Conductivity::calc_anharmonic_imagself()
                                                        dos->kmesh_dos,
                                                        dos->dymat_dos->get_eigenvalues(),
                                                        dos->dymat_dos->get_eigenvectors(),
-                                                       damping3_loc);
+                                                       damping3_loc,
+                                                       std_ret);
                 }
             } else if (integration->ismear == -1) {
                 if(anharmonic_core->integration_method<=0){
@@ -386,7 +393,8 @@ void Conductivity::calc_anharmonic_imagself()
                                                           dos->kmesh_dos,
                                                           dos->dymat_dos->get_eigenvalues(),
                                                           dos->dymat_dos->get_eigenvectors(),
-                                                          damping3_loc);
+                                                          damping3_loc,
+                                                          std_ret);
                 }
             }
         }
@@ -397,6 +405,11 @@ void Conductivity::calc_anharmonic_imagself()
         MPI_Gather(&damping3_loc[0], ntemp, MPI_DOUBLE,
                    damping3[nshift_restart + i * mympi->nprocs], ntemp,
                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        
+        MPI_Gather(&std_ret[0], ntemp, MPI_DOUBLE,
+                   std_err[nshift_restart + i * mympi->nprocs], ntemp,
+                   MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
         if (mympi->my_rank == 0) {
             now = std::chrono::system_clock::now();
             anharmonic_core->elapsed_com += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
@@ -410,6 +423,8 @@ void Conductivity::calc_anharmonic_imagself()
             if(anharmonic_core->integration_method<=0){
                 std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
             }else{
+                write_result_err(i, nshift_restart, vel, std_err);
+                //std::cout << anharmonic_core->std_ret[0];
                 std::cout << " MODE " << std::setw(5) << i + 1 << ", SPS:"
                  << anharmonic_core->elapsed_SPS  << ", sample:" 
                  << anharmonic_core->elapsed_sample  << ", V3:" 
@@ -420,6 +435,7 @@ void Conductivity::calc_anharmonic_imagself()
         }
     }
     deallocate(damping3_loc);
+    deallocate(std_ret);
 }
 
 void Conductivity::write_result_gamma(const unsigned int ik,
@@ -454,6 +470,30 @@ void Conductivity::write_result_gamma(const unsigned int ik,
                               << damp_in[iks_g][k] * Hz_to_kayser / time_ry << std::endl;
         }
         writes->fs_result << "#END GAMMA_EACH" << std::endl;
+    }
+}
+
+void Conductivity::write_result_err(const unsigned int ik,
+                                      const unsigned int nshift,
+                                      double ***vel_in,
+                                      double **ret_err) const
+{
+    const unsigned int np = mympi->nprocs;
+    unsigned int k;
+
+    for (unsigned int j = 0; j < np; ++j) {
+
+        const auto iks_g = ik * np + j + nshift;
+
+        if (iks_g >= dos->kmesh_dos->nk_irred * ns) break;
+
+        for (k = 0; k < ntemp; ++k) {
+            writes->fs_err << std::setw(15) << std::scientific
+                              << ret_err[iks_g][k];
+        }
+
+        writes->fs_err << "%" << "GAMMA_EACH  ";
+        writes->fs_err << iks_g / ns + 1 << " " << iks_g % ns + 1 << std::endl;
     }
 }
 

@@ -906,7 +906,8 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                                            const KpointMeshUniform *kmesh_in,
                                            const double *const *eval_in,
                                            const std::complex<double> *const *const *evec_in,
-                                           double *ret)
+                                           double *ret,
+                                           double *ret_err)
 {
     // This function returns the imaginary part of phonon self-energy 
     // for the given frequency omega_in.
@@ -954,6 +955,7 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
     int mcid;            // < nsample
     int ik_tmp, is_tmp;            //i
     double rand_tmp;
+    double var_tmp;
 
     std::chrono::system_clock::time_point  start, now;
     if (mympi->my_rank == 0) {
@@ -1247,8 +1249,9 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
         for (i = 0; i < ntemp; ++i) {
             T_tmp = temp_in[i];
             ret_tmp = 0.0;
+            var_tmp=0.0;
 #ifdef _OPENMP
-#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
+#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp,var_tmp)
 #endif
             for(mcid=0;mcid<nsample;mcid++){
                 if(method=="WSPS"){
@@ -1264,6 +1267,7 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                     }else{
                         ret_tmp -= v3_mc_arr[i][mcid];
                     }
+                    var_tmp += v3_mc_arr[i][mcid]*v3_mc_arr[i][mcid];
                 }else if(method=="SPS"){
                     ik=sample_id_arr[0][mcid]/ns2;
                     int ib=sample_id_arr[0][mcid]%ns2;
@@ -1290,20 +1294,27 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                     //since probability function(SPS) does not have linear correlation, 
                     // v3 should be divided by probability function SPS
                     // and WSPS is multiplied after that
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1])
+                                      /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
                     if(sign_map_mc[0][ik][ib]>0){
-                        ret_tmp += v3_mc_arr[0][mcid]
-                               * (n1 * delta_arr[ik][ns * is + js][0]
-                                  - n2 * delta_arr[ik][ns * is + js][1])
-                                  /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                        ret_tmp += v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
                     }else{
-                        ret_tmp -= v3_mc_arr[0][mcid]
-                               * (n1 * delta_arr[ik][ns * is + js][0]
-                                  - n2 * delta_arr[ik][ns * is + js][1])
-                                  /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                        ret_tmp -= v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
                     }
                 }
             }
             //ret[i] = ret_tmp;
+            if(ret_tmp < 1.0e-8){
+                ret_err[i]=0;
+            }else{
+                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/ret_tmp;
+            }
+             //calculation of relative standard error (error / value)
+             //std_ret should be allocated before this function is called
             if(method=="WSPS"){
                 ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
             }else if(method=="SPS"){
@@ -1339,7 +1350,7 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4) / static_cast<double>(nk);
     
     if (mympi->my_rank == 0) {  //write number of total channel and calculated sample
-        std::cout << nsample << " / " << npair_uniq * ns2 << " channels are calculated. ";
+        std::cout << nsample << " / " << npair_uniq * ns2 << " channels. ";
     }
 }
 
@@ -1541,7 +1552,8 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                                               const KpointMeshUniform *kmesh_in,
                                               const double *const *eval_in,
                                               const std::complex<double> *const *const *evec_in,
-                                              double *ret)
+                                              double *ret,
+                                              double *ret_err)
 {
     // This function returns the imaginary part of phonon self-energy 
     // for the given frequency omega_in.
@@ -1589,6 +1601,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
     int mcid;            // < nsample
     int ik_tmp, is_tmp;            //i
     double rand_tmp;
+    double var_tmp;
 
     std::chrono::system_clock::time_point  start, now;
     if (mympi->my_rank == 0) {
@@ -1900,8 +1913,9 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
         for (i = 0; i < ntemp; ++i) {
             T_tmp = temp_in[i];
             ret_tmp = 0.0;
+            var_tmp=0.0;
 #ifdef _OPENMP
-#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
+#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp,var_tmp)
 #endif
             for(mcid=0;mcid<nsample;mcid++){
                 if(method=="WSPS"){
@@ -1917,6 +1931,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                     }else{
                         ret_tmp -= v3_mc_arr[i][mcid];
                     }
+                    var_tmp += v3_mc_arr[i][mcid]*v3_mc_arr[i][mcid];
                 }else if(method=="SPS"){
                     ik=sample_id_arr[0][mcid]/ns2;
                     int ib=sample_id_arr[0][mcid]%ns2;
@@ -1943,20 +1958,27 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                     //since probability function(SPS) does not have linear correlation, 
                     // v3 should be divided by probability function SPS
                     // and WSPS is multiplied after that
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1])
+                                      /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
                     if(sign_map_mc[0][ik][ib]>0){
-                        ret_tmp += v3_mc_arr[0][mcid]
-                               * (n1 * delta_arr[ik][ns * is + js][0]
-                                  - n2 * delta_arr[ik][ns * is + js][1])
-                                  /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                        ret_tmp += v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
                     }else{
-                        ret_tmp -= v3_mc_arr[0][mcid]
-                               * (n1 * delta_arr[ik][ns * is + js][0]
-                                  - n2 * delta_arr[ik][ns * is + js][1])
-                                  /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                        ret_tmp -= v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
                     }
                 }
             }
             //ret[i] = ret_tmp;
+            if(ret_tmp < 1.0e-8){
+                ret_err[i]=0;
+            }else{
+                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/ret_tmp;
+            }
+             //calculation of relative standard error (error / value)
+             //std_ret should be allocated before this function is called
             if(method=="WSPS"){
                 ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
             }else if(method=="SPS"){
@@ -1994,7 +2016,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4);
 
     if (mympi->my_rank == 0) {  //write number of total channel and calculated sample
-        std::cout << nsample << " / " << npair_uniq * ns2 << " channels are calculated. ";
+        std::cout << nsample << " / " << npair_uniq * ns2 << " channels. ";
     }
 }
 

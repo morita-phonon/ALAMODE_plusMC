@@ -87,6 +87,7 @@ public:
     std::array<int, 3> getShiftUcorr() const;
 
     std::fstream fs_result;
+    std::fstream fs_err;
     std::string file_result;
     int nbands;
 

@@ -114,7 +114,8 @@ public:
                                const KpointMeshUniform *kmesh_in,
                                const double *const *eval_in,
                                const std::complex<double> *const *const *evec_in,
-                               double *ret);
+                               double *ret,
+                               double *ret_err);
 
     void calc_damping_tetrahedron(const unsigned int ntemp,
                                   const double *temp_in,
@@ -134,7 +135,8 @@ public:
                                   const KpointMeshUniform *kmesh_in,
                                   const double *const *eval_in,
                                   const std::complex<double> *const *const *evec_in,
-                                  double *ret);
+                                  double *ret,
+                                  double *ret_err);
 
     int quartic_mode;
     bool use_tuned_ver;
