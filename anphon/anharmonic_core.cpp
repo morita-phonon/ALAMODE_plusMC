@@ -1048,7 +1048,22 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
     }
 
     //map_mc generation
-    if(method=="SPS" || "WSPS"){
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        //reassign nsample
+        if(use_sample_density){
+            nsample=ns2*npair_uniq*sample_density;
+        }
+        //assign nrep_sample
+        //if mode is SPS< generated samples is not dependent on temperature
+        if(method=="WSPS"){
+            nrep_sample=ntemp;
+        }else if(method=="SPS"){
+            nrep_sample=1;
+        }else if(method=="SIMPLE"){
+            nrep_sample=1;
+        }
+    }
+    if(method=="SPS" || method=="WSPS"){
         //reassign nsample
         if(use_sample_density){
             nsample=ns2*npair_uniq*sample_density;
@@ -1194,7 +1209,21 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             }
             //for-roop of mc_sample is finished
         }
-
+    // finish sample generation using SPS
+    }else if(method == "SIMPLE"){
+        allocate(sample_id_arr, nrep_sample, nsample);
+        std::uniform_int_distribution<> rand_gen(0, npair_uniq * ns * ns-1);
+        // since uniform_int_dist can generate upper limit value, -1 correction is needed
+        for(mcid=0;mcid<nsample;mcid++){
+            sample_id_arr[0][mcid]=rand_gen(mt);
+        }
+        std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
+        /*for(mcid=0;mcid<nsample;mcid++){
+            std::cout << sample_id_arr[0][mcid] << " ";
+        }
+        std::cout << std::endl;*/
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         if (mympi->my_rank == 0) {
             now = std::chrono::system_clock::now();
             elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
@@ -1305,6 +1334,35 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                         ret_tmp -= v3_tmp;
                         var_tmp += v3_tmp*v3_tmp;
                     }
+                }else if(method=="SIMPLE"){  //simply summed up
+                    ik=sample_id_arr[0][mcid]/ns2;
+                    int ib=sample_id_arr[0][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1]);
+                    
+                    ret_tmp += v3_tmp;
+                    var_tmp += v3_tmp*v3_tmp;
                 }
             }
             //ret[i] = ret_tmp;
@@ -1321,7 +1379,9 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             if(method=="WSPS"){
                 ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
             }else if(method=="SPS"){
-                ret[i] = ret_tmp*map_mc_ik[0][npair_uniq-1]/nsample;  
+                ret[i] = ret_tmp*map_mc_ik[0][npair_uniq-1]/nsample;    
+            }else if(method=="SIMPLE"){
+                ret[i] = ret_tmp*npair_uniq*ns2/nsample;
             }
             //renormalization by volume of integration space
             //note map_mc_ik[i][npair_uniq-1] is total volume (last term of accumulation)
@@ -1345,6 +1405,8 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
         deallocate(sign_map_mc);
         deallocate(map_mc_ik);
         deallocate(rand_val);
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         deallocate(sample_id_arr);
         deallocate(calculated_v3_map);
         deallocate(v3_mc_arr);
@@ -1715,7 +1777,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
     }
 
     //map_mc generation
-    if(method=="SPS" || "WSPS"){
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         //reassign nsample
         if(use_sample_density){
             nsample=ns2*npair_uniq*sample_density;
@@ -1726,7 +1788,11 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             nrep_sample=ntemp;
         }else if(method=="SPS"){
             nrep_sample=1;
+        }else if(method=="SIMPLE"){
+            nrep_sample=1;
         }
+    }
+    if(method=="SPS" || method=="WSPS"){
         allocate(map_mc, nrep_sample, npair_uniq, ns * ns);
         allocate(sign_map_mc, nrep_sample, npair_uniq, ns * ns);
         allocate(map_mc_ik, nrep_sample, npair_uniq);
@@ -1861,7 +1927,21 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             }
             //for-roop of mc_sample is finished
         }
-
+    // finish sample generation using SPS
+    }else if(method == "SIMPLE"){
+        allocate(sample_id_arr, nrep_sample, nsample);
+        std::uniform_int_distribution<> rand_gen(0, npair_uniq * ns * ns-1);
+        // since uniform_int_dist can generate upper limit value, -1 correction is needed
+        for(mcid=0;mcid<nsample;mcid++){
+            sample_id_arr[0][mcid]=rand_gen(mt);
+        }
+        std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
+        /*for(mcid=0;mcid<nsample;mcid++){
+            std::cout << sample_id_arr[0][mcid] << " ";
+        }
+        std::cout << std::endl;*/
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         if (mympi->my_rank == 0) {
             now = std::chrono::system_clock::now();
             elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
@@ -1972,6 +2052,35 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                         ret_tmp -= v3_tmp;
                         var_tmp += v3_tmp*v3_tmp;
                     }
+                }else if(method=="SIMPLE"){  //simply summed up
+                    ik=sample_id_arr[0][mcid]/ns2;
+                    int ib=sample_id_arr[0][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1]);
+                    
+                    ret_tmp += v3_tmp;
+                    var_tmp += v3_tmp*v3_tmp;
                 }
             }
             //ret[i] = ret_tmp;
@@ -1989,6 +2098,8 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                 ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
             }else if(method=="SPS"){
                 ret[i] = ret_tmp*map_mc_ik[0][npair_uniq-1]/nsample;  
+            }else if(method=="SIMPLE"){
+                ret[i] = ret_tmp*npair_uniq*ns2/nsample;
             }
             //renormalization by volume of integration space
             //note map_mc_ik[i][npair_uniq-1] is total volume (last term of accumulation)
@@ -2012,6 +2123,8 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
         deallocate(sign_map_mc);
         deallocate(map_mc_ik);
         deallocate(rand_val);
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         deallocate(sample_id_arr);
         deallocate(calculated_v3_map);
         deallocate(v3_mc_arr);
