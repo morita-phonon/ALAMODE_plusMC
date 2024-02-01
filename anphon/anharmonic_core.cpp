@@ -28,6 +28,7 @@ or http://opensource.org/licenses/mit-license.php for information.
 
 #include <random>
 #include <chrono>
+#include <fstream>
 
 #ifdef _OPENMP
 
@@ -852,9 +853,17 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) {
         T_tmp = temp_in[i];
         ret_tmp = 0.0;
-#ifdef _OPENMP
-#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
-#endif
+
+        std::stringstream fname_delta;
+        fname_delta << "T" << T_tmp << "K_delta_" << knum << "_" << is_in << ".dat"; 
+        std::ofstream ofs_delta(fname_delta.str());
+        if (!ofs_delta){
+            std::cout << "File " << fname_delta.str() << " cannot be opened." << std::endl;
+            std::exit(1);
+        }
+//#ifdef _OPENMP
+//#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
+//#endif
         for (ik = 0; ik < npair_uniq; ++ik) {
 
             k1 = triplet[ik].group[0].ks[0];
@@ -885,10 +894,14 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
                     ret_tmp += v3_arr[ik][ns * is + js]
                                * (n1 * delta_arr[ik][ns * is + js][0]
                                   - n2 * delta_arr[ik][ns * is + js][1]);
+                    ofs_delta << ik << " " << k1 << " " << k2 << " " << is << " " << js << " " << omega_inner[0]
+                         << " " << omega_inner[1] << " " << n1 << " " << n2 << " " << delta_arr[ik][ns * is + js][0]
+                         << " " << delta_arr[ik][ns * is + js][1] << " " << v3_arr[ik][ns * is + js] << std::endl;
                 }
             }
         }
         ret[i] = ret_tmp;
+        ofs_delta.close();
     }
 
     deallocate(v3_arr);
@@ -1563,9 +1576,17 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
     for (i = 0; i < ntemp; ++i) {
         T_tmp = temp_in[i];
         ret_tmp = 0.0;
-#ifdef _OPENMP
-#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
-#endif
+
+        std::stringstream fname_delta;
+        fname_delta << "T" << T_tmp << "K_delta_" << knum << "_" << is_in << ".dat"; 
+        std::ofstream ofs_delta(fname_delta.str());
+        if (!ofs_delta){
+            std::cout << "File " << fname_delta.str() << " cannot be opened." << std::endl;
+            std::exit(1);
+        }
+//#ifdef _OPENMP
+//#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp)
+//#endif
         for (ik = 0; ik < npair_uniq; ++ik) {
 
             k1 = triplet[ik].group[0].ks[0];
@@ -1596,10 +1617,14 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
                     ret_tmp += v3_arr[ik][ns * is + js]
                                * (n1 * delta_arr[ik][ns * is + js][0]
                                   - n2 * delta_arr[ik][ns * is + js][1]);
+                    ofs_delta << ik << " " << k1 << " " << k2 << " " << is << " " << js << " " << omega_inner[0]
+                         << " " << omega_inner[1] << " " << n1 << " " << n2 << " " << delta_arr[ik][ns * is + js][0]
+                         << " " << delta_arr[ik][ns * is + js][1] << " " << v3_arr[ik][ns * is + js] << std::endl;
                 }
             }
         }
         ret[i] = ret_tmp;
+        ofs_delta.close();
     }
 
     deallocate(v3_arr);
