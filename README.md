@@ -7,7 +7,7 @@ put new variables in &general field: MC_METHOD and (SAMPLE or SAMPLE_DENSITY) is
 * use MC_METHOD to apply MC integration
   MC_METHOD = 0 # MC integration is not active, default
 
-  MC_METHOD = 1 # simple MC integration (without important sampling) !! not implemented yet
+  MC_METHOD = 1 # simple MC integration (without important sampling)
 
   MC_METHOD = 2 # MC integration with important sampling (use SPS, recommended)
 
