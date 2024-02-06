@@ -1255,16 +1255,18 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                 arr[0] = ns * knum_minus + is_in;
                 arr[1] = ns * k1 + is;
                 arr[2] = ns * k2 + js;
-                //if v3 for ik and ib is not calculated
-                if(calculated_v3_map[ik][ib]==0){
-                    calculated_v3_map[ik][ib] = std::norm(V3(arr,
-                                            kmesh_in->xk,
-                                            eval_in,
-                                            evec_in,
-                                            phase_storage_dos)) * multi;
-                    v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
-                }else{
-                    v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                if (delta_arr[ik][ib][0] > 0.0 || std::abs(delta_arr[ik][ib][1]) > 0.0) {
+                    //if v3 for ik and ib is not calculated
+                    if(calculated_v3_map[ik][ib]==0){
+                        calculated_v3_map[ik][ib] = std::norm(V3(arr,
+                                                kmesh_in->xk,
+                                                eval_in,
+                                                evec_in,
+                                                phase_storage_dos)) * multi;
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }else{
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }
                 }
             }
         }
@@ -1973,16 +1975,18 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
                 arr[0] = ns * knum_minus + is_in;
                 arr[1] = ns * k1 + is;
                 arr[2] = ns * k2 + js;
+                if (delta_arr[ik][ib][0] > 0.0 || std::abs(delta_arr[ik][ib][1]) > 0.0) {
                 //if v3 for ik and ib is not calculated
-                if(calculated_v3_map[ik][ib]==0){
-                    calculated_v3_map[ik][ib] = std::norm(V3(arr,
-                                            kmesh_in->xk,
-                                            eval_in,
-                                            evec_in,
-                                            phase_storage_dos)) * multi;
-                    v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
-                }else{
-                    v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    if(calculated_v3_map[ik][ib]==0){
+                        calculated_v3_map[ik][ib] = std::norm(V3(arr,
+                                                kmesh_in->xk,
+                                                eval_in,
+                                                evec_in,
+                                                phase_storage_dos)) * multi;
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }else{
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }
                 }
             }
         }
