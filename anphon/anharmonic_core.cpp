@@ -1487,6 +1487,40 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
 
     for (i = 0; i < nk; ++i) kmap_identity[i] = i;
 
+    //check if tetrahedra contain irred k point or not
+    //generate map of irred kpoint or not
+    int *map_knum2ik;
+    allocate(map_knum2ik, nk);
+    for(i=0;i<nk;++i) map_knum2ik[i]=-1;
+    for(ik=0;ik<npair_uniq;ik++){
+        k1=triplet[ik].group[0].ks[0];
+        map_knum2ik[k1]=ik;
+    }
+    bool *map_tetra;
+    allocate(map_tetra, dos->tetra_nodes_dos->get_ntetra());
+    //int count=0;
+    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+        map_tetra[i]=false;
+        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+        for(int j=0;j<4;j++){
+            if(map_knum2ik[tetra[j]]<0)continue;
+            map_tetra[i]=true;  //at least one irred k is contained
+            //count++;
+            break;
+        }
+    }
+    //std::cout << "count=" << count << "/" << dos->tetra_nodes_dos->get_ntetra();
+    bool *map_contained;
+    allocate(map_contained, nk);
+    for(i=0;i<nk;++i) map_contained[i]=false;
+    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+        if(!map_tetra[i])continue;
+        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+        for(int j=0;j<4;++j){
+            map_contained[tetra[j]]=true;
+        }
+    }
+
 #ifdef _OPENMP
 #pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
 #endif
@@ -1502,6 +1536,7 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
             js = ib % ns;
 
             for (k1 = 0; k1 < nk; ++k1) {
+                if(!map_contained[k1])continue;
 
                 // Prepare two-phonon frequency for the tetrahedron method
 
@@ -1515,7 +1550,7 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
             }
 
             for (i = 0; i < 3; ++i) {
-                integration->calc_weight_tetrahedron(nk, kmap_identity,
+                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra,
                                                      energy_tmp[i], omega_in,
                                                      dos->tetra_nodes_dos->get_ntetra(),
                                                      dos->tetra_nodes_dos->get_tetras(),
@@ -1532,6 +1567,9 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
         deallocate(energy_tmp);
         deallocate(weight_tetra);
     }
+    deallocate(map_tetra);
+    deallocate(map_knum2ik);
+    deallocate(map_contained);
 
     for (ik = 0; ik < npair_uniq; ++ik) {
 
@@ -1726,6 +1764,40 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
 
     for (i = 0; i < nk; ++i) kmap_identity[i] = i;
 
+    //check if tetrahedra contain irred k point or not
+    //generate map of irred kpoint or not
+    int *map_knum2ik;
+    allocate(map_knum2ik, nk);
+    for(i=0;i<nk;++i) map_knum2ik[i]=-1;
+    for(ik=0;ik<npair_uniq;ik++){
+        k1=triplet[ik].group[0].ks[0];
+        map_knum2ik[k1]=ik;
+    }
+    bool *map_tetra;
+    allocate(map_tetra, dos->tetra_nodes_dos->get_ntetra());
+    //int count=0;
+    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+        map_tetra[i]=false;
+        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+        for(int j=0;j<4;j++){
+            if(map_knum2ik[tetra[j]]<0)continue;
+            map_tetra[i]=true;  //at least one irred k is contained
+            //count++;
+            break;
+        }
+    }
+    //std::cout << "count=" << count << "/" << dos->tetra_nodes_dos->get_ntetra();
+    bool *map_contained;
+    allocate(map_contained, nk);
+    for(i=0;i<nk;++i) map_contained[i]=false;
+    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+        if(!map_tetra[i])continue;
+        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+        for(int j=0;j<4;++j){
+            map_contained[tetra[j]]=true;
+        }
+    }
+
 #ifdef _OPENMP
 #pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
 #endif
@@ -1741,6 +1813,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             js = ib % ns;
 
             for (k1 = 0; k1 < nk; ++k1) {
+                if(!map_contained[k1])continue;
 
                 // Prepare two-phonon frequency for the tetrahedron method
 
@@ -1754,7 +1827,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             }
 
             for (i = 0; i < 3; ++i) {
-                integration->calc_weight_tetrahedron(nk, kmap_identity,
+                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra,
                                                      energy_tmp[i], omega_in,
                                                      dos->tetra_nodes_dos->get_ntetra(),
                                                      dos->tetra_nodes_dos->get_tetras(),
@@ -1771,6 +1844,10 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
         deallocate(energy_tmp);
         deallocate(weight_tetra);
     }
+
+    deallocate(map_tetra);
+    deallocate(map_knum2ik);
+    deallocate(map_contained);
 
     if (mympi->my_rank == 0) {
         now = std::chrono::system_clock::now();
