@@ -1715,7 +1715,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
 
     const auto npair_uniq = triplet.size();
 
-    allocate(v3_arr, npair_uniq, ns2);
+    //allocate(v3_arr, npair_uniq, ns2);
     allocate(delta_arr, npair_uniq, ns2, 2);
 
     const auto knum = kmesh_in->kpoint_irred_all[ik_in][0].knum;
