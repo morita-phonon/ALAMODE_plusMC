@@ -386,6 +386,65 @@ void Integration::calc_weight_tetrahedron_irr(const unsigned int nk_irreducible,
     for (i = 0; i < nk_irreducible; ++i) weight[i] *= factor;
 }
 
+void Integration::calc_weight_tetrahedron_each(double *e_tmp,
+                                          const double e_ref,
+                                          const unsigned int ntetra,
+                                          double *weight) const
+{
+    int i;
+
+    double g;
+    int sort_arg[4];
+    for (i = 0; i < 4; ++i) weight[i] = 0.0;
+
+    insertion_sort(e_tmp, sort_arg, 4);
+    const auto e1 = e_tmp[0];
+    const auto e2 = e_tmp[1];
+    const auto e3 = e_tmp[2];
+    const auto e4 = e_tmp[3];
+
+    auto I1 = 0.0;
+    auto I2 = 0.0;
+    auto I3 = 0.0;
+    auto I4 = 0.0;
+
+    if (e3 <= e_ref && e_ref < e4) {
+        g = std::pow(e4 - e_ref, 2) / ((e4 - e1) * (e4 - e2) * (e4 - e3));
+
+        I1 = g * fij(e1, e4, e_ref);
+        I2 = g * fij(e2, e4, e_ref);
+        I3 = g * fij(e3, e4, e_ref);
+        I4 = g * (fij(e4, e1, e_ref) + fij(e4, e2, e_ref) + fij(e4, e3, e_ref));
+
+    } else if (e2 <= e_ref && e_ref < e3) {
+        g = (e2 - e1 + 2.0 * (e_ref - e2) - (e4 + e3 - e2 - e1)
+                                            * std::pow(e_ref - e2, 2) / ((e3 - e2) * (e4 - e2))) /
+            ((e3 - e1) * (e4 - e1));
+
+        I1 = g * fij(e1, e4, e_ref) + fij(e1, e3, e_ref) * fij(e3, e1, e_ref) * fij(e2, e3, e_ref) / (e4 - e1);
+        I2 = g * fij(e2, e3, e_ref) + std::pow(fij(e2, e4, e_ref), 2) * fij(e3, e2, e_ref) / (e4 - e1);
+        I3 = g * fij(e3, e2, e_ref) + std::pow(fij(e3, e1, e_ref), 2) * fij(e2, e3, e_ref) / (e4 - e1);
+        I4 = g * fij(e4, e1, e_ref) + fij(e4, e2, e_ref) * fij(e2, e4, e_ref) * fij(e3, e2, e_ref) / (e4 - e1);
+
+    } else if (e1 <= e_ref && e_ref < e2) {
+        g = std::pow(e_ref - e1, 2) / ((e2 - e1) * (e3 - e1) * (e4 - e1));
+
+        I1 = g * (fij(e1, e2, e_ref) + fij(e1, e3, e_ref) + fij(e1, e4, e_ref));
+        I2 = g * fij(e2, e1, e_ref);
+        I3 = g * fij(e3, e1, e_ref);
+        I4 = g * fij(e4, e1, e_ref);
+
+    } else {
+        return;
+    }
+    weight[sort_arg[0]] = I1;
+    weight[sort_arg[1]] = I2;
+    weight[sort_arg[2]] = I3;
+    weight[sort_arg[3]] = I4;
+    auto factor = 1.0 / static_cast<double>(ntetra);
+    for (i = 0; i < 4; ++i) weight[i] *= factor;
+}
+
 void Integration::calc_weight_smearing(const unsigned int nk,
                                        const unsigned int nk_irreducible,
                                        const unsigned int *map_to_irreducible_k,

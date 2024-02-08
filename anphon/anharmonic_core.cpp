@@ -1777,104 +1777,105 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
 
     for (i = 0; i < nk; ++i) kmap_identity[i] = i;
 
-    //check if tetrahedra contain irred k point or not
-    //generate map of irred kpoint or not
-    int *map_knum2ik;
-    allocate(map_knum2ik, nk);
-    for(i=0;i<nk;++i) map_knum2ik[i]=-1;
-    for(ik=0;ik<npair_uniq;ik++){
-        k1=triplet[ik].group[0].ks[0];
-        map_knum2ik[k1]=ik;
-    }
-    bool *map_tetra;
-    allocate(map_tetra, dos->tetra_nodes_dos->get_ntetra());
-    //int count=0;
-    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
-        map_tetra[i]=false;
-        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
-        for(int j=0;j<4;j++){
-            if(map_knum2ik[tetra[j]]<0)continue;
-            map_tetra[i]=true;  //at least one irred k is contained
-            //count++;
-            break;
+    if(method=="SPS" || method=="WSPS"){
+        //check if tetrahedra contain irred k point or not
+        //generate map of irred kpoint or not
+        int *map_knum2ik;
+        allocate(map_knum2ik, nk);
+        for(i=0;i<nk;++i) map_knum2ik[i]=-1;
+        for(ik=0;ik<npair_uniq;ik++){
+            k1=triplet[ik].group[0].ks[0];
+            map_knum2ik[k1]=ik;
         }
-    }
-    //std::cout << "count=" << count << "/" << dos->tetra_nodes_dos->get_ntetra();
-    bool *map_contained;
-    allocate(map_contained, nk);
-    for(i=0;i<nk;++i) map_contained[i]=false;
-    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
-        if(!map_tetra[i])continue;
-        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
-        for(int j=0;j<4;++j){
-            map_contained[tetra[j]]=true;
+        bool *map_tetra;
+        allocate(map_tetra, dos->tetra_nodes_dos->get_ntetra());
+        //int count=0;
+        for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            map_tetra[i]=false;
+            unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+            for(int j=0;j<4;j++){
+                if(map_knum2ik[tetra[j]]<0)continue;
+                map_tetra[i]=true;  //at least one irred k is contained
+                //count++;
+                break;
+            }
         }
-    }
+        //std::cout << "count=" << count << "/" << dos->tetra_nodes_dos->get_ntetra();
+        bool *map_contained;
+        allocate(map_contained, nk);
+        for(i=0;i<nk;++i) map_contained[i]=false;
+        for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            if(!map_tetra[i])continue;
+            unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+            for(int j=0;j<4;++j){
+                map_contained[tetra[j]]=true;
+            }
+        }
 
-#ifdef _OPENMP
-#pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
-#endif
-    {
-        allocate(energy_tmp, 3, nk);
-        allocate(weight_tetra, 3, nk);
-        bool **map_tetra_tmp;
-        allocate(map_tetra_tmp, 3, dos->tetra_nodes_dos->get_ntetra());
+    #ifdef _OPENMP
+    #pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
+    #endif
+        {
+            allocate(energy_tmp, 3, nk);
+            allocate(weight_tetra, 3, nk);
+            bool **map_tetra_tmp;
+            allocate(map_tetra_tmp, 3, dos->tetra_nodes_dos->get_ntetra());
 
-#ifdef _OPENMP
-#pragma omp for
-#endif
-        for (ib = 0; ib < ns2; ++ib) {
-            is = ib / ns;
-            js = ib % ns;
-            if(js==0){
-                //set map_tetra_tmp[i]
-                for(i=0;i<3;i++){
-                    for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
-                        map_tetra_tmp[i][ik]=map_tetra[ik];
+    #ifdef _OPENMP
+    #pragma omp for
+    #endif
+            for (ib = 0; ib < ns2; ++ib) {
+                is = ib / ns;
+                js = ib % ns;
+                if(js==0){
+                    //set map_tetra_tmp[i]
+                    for(i=0;i<3;i++){
+                        for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                            map_tetra_tmp[i][ik]=map_tetra[ik];
+                        }
                     }
+                }
+
+                for (k1 = 0; k1 < nk; ++k1) {
+                    if(!map_contained[k1])continue;
+
+                    // Prepare two-phonon frequency for the tetrahedron method
+
+                    for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
+
+                    k2 = kmesh_in->get_knum(xk_tmp);
+
+                    energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
+                    energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
+                    energy_tmp[2][k1] = -energy_tmp[1][k1];
+                }
+
+                for (i = 0; i < 3; ++i) {
+                    bool flag_ascend=true;
+                    if(i==1)flag_ascend=false;
+                    integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
+                                                        energy_tmp[i], omega_in,
+                                                        dos->tetra_nodes_dos->get_ntetra(),
+                                                        dos->tetra_nodes_dos->get_tetras(),
+                                                        weight_tetra[i],flag_ascend);
+                }
+
+                for (ik = 0; ik < npair_uniq; ++ik) {
+                    jk = triplet[ik].group[0].ks[0];
+                    delta_arr[ik][ib][0] = weight_tetra[0][jk];
+                    delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
                 }
             }
 
-            for (k1 = 0; k1 < nk; ++k1) {
-                if(!map_contained[k1])continue;
-
-                // Prepare two-phonon frequency for the tetrahedron method
-
-                for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
-
-                k2 = kmesh_in->get_knum(xk_tmp);
-
-                energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
-                energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
-                energy_tmp[2][k1] = -energy_tmp[1][k1];
-            }
-
-            for (i = 0; i < 3; ++i) {
-                bool flag_ascend=true;
-                if(i==1)flag_ascend=false;
-                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
-                                                     energy_tmp[i], omega_in,
-                                                     dos->tetra_nodes_dos->get_ntetra(),
-                                                     dos->tetra_nodes_dos->get_tetras(),
-                                                     weight_tetra[i],flag_ascend);
-            }
-
-            for (ik = 0; ik < npair_uniq; ++ik) {
-                jk = triplet[ik].group[0].ks[0];
-                delta_arr[ik][ib][0] = weight_tetra[0][jk];
-                delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
-            }
+            deallocate(energy_tmp);
+            deallocate(weight_tetra);
+            deallocate(map_tetra_tmp);
         }
 
-        deallocate(energy_tmp);
-        deallocate(weight_tetra);
-        deallocate(map_tetra_tmp);
+        deallocate(map_tetra);
+        deallocate(map_knum2ik);
+        deallocate(map_contained);
     }
-
-    deallocate(map_tetra);
-    deallocate(map_knum2ik);
-    deallocate(map_contained);
-
     if (mympi->my_rank == 0) {
         now = std::chrono::system_clock::now();
         elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
@@ -2032,6 +2033,11 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             }
             //for-roop of mc_sample is finished
         }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
     // finish sample generation using SPS
     }else if(method == "SIMPLE"){
         allocate(sample_id_arr, nrep_sample, nsample);
@@ -2041,17 +2047,80 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             sample_id_arr[0][mcid]=rand_gen(mt);
         }
         std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
-        /*for(mcid=0;mcid<nsample;mcid++){
-            std::cout << sample_id_arr[0][mcid] << " ";
-        }
-        std::cout << std::endl;*/
-    }
-    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         if (mympi->my_rank == 0) {
             now = std::chrono::system_clock::now();
             elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
             start = std::chrono::system_clock::now();
         }
+
+        //generate map from k to tetra
+        int **map_tetra;
+        int *map_tetra_length;
+        allocate(map_tetra, nk, 40);
+        allocate(map_tetra_length, nk);
+        for(i=0;i<nk;i++) map_tetra_length[i]=0;
+        for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            for(int j=0;j<4;j++){
+                int k1_tmp=dos->tetra_nodes_dos->get_tetras()[i][j];
+                map_tetra[k1_tmp][map_tetra_length[k1_tmp]]=i;
+                map_tetra_length[k1_tmp]+=1;
+                if(map_tetra_length[k1_tmp]>40){
+                    std::cerr << "two many tetras" << std::endl;
+                    std::exit(1);
+                }
+            }
+        }
+        for(mcid=0;mcid<nsample;mcid++){
+            ik=sample_id_arr[0][mcid]/ns2;
+            int ib=sample_id_arr[0][mcid]%ns2;
+            k1 = triplet[ik].group[0].ks[0];
+            k2 = triplet[ik].group[0].ks[1];
+            is = ib / ns;
+            js = ib % ns;
+            delta_arr[ik][ib][0]=0;
+            delta_arr[ik][ib][1]=0;
+            double **energy_tmp;
+            double **weight_tetra;
+            allocate(energy_tmp, 3, 4);
+            allocate(weight_tetra, 3, 4);
+            //roop about related tetrahedron
+            for(i=0;i<map_tetra_length[k1];++i){
+                //do tetrahedron
+                unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[map_tetra[k1][i]];
+                for(int j=0;j<4;j++){
+                    int k1_tmp=tetra[j];
+                    for (int k = 0; k < 3; ++k) xk_tmp[k] = xk[knum][k] - xk[k1_tmp][k];
+
+                    int k2_tmp = kmesh_in->get_knum(xk_tmp);
+
+                    energy_tmp[0][j] = eval_in[k1_tmp][is] + eval_in[k2_tmp][js];
+                    energy_tmp[1][j] = eval_in[k1_tmp][is] - eval_in[k2_tmp][js];
+                    energy_tmp[2][j] = -energy_tmp[1][j];
+                }
+                for(int j=0;j<3;++j){
+                    integration->calc_weight_tetrahedron_each(energy_tmp[j],omega_in,
+                                                                dos->tetra_nodes_dos->get_ntetra(),
+                                                                weight_tetra[j]);
+                }
+                for(int j=0;j<4;j++){
+                    if(tetra[j]==k1){
+                        delta_arr[ik][ib][0] += weight_tetra[0][j];
+                        delta_arr[ik][ib][1] += weight_tetra[1][j] - weight_tetra[2][j];
+                    }
+                }
+            }
+            deallocate(energy_tmp);
+            deallocate(weight_tetra);
+        }
+        deallocate(map_tetra);
+        deallocate(map_tetra_length);
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         //calculate V3 and store it into v3_map
         allocate(calculated_v3_map, npair_uniq, ns2);
         //set zero

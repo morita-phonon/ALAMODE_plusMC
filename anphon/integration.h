@@ -113,6 +113,11 @@ public:
                                  double *weight,
                                  bool is_ascend) const;
 
+    void calc_weight_tetrahedron_each(double *e_tmp, 
+                                 const double e_ref, 
+                                 const unsigned int ntetra, 
+                                 double *weight) const;
+
     void calc_weight_smearing(const unsigned int nk,
                               const unsigned int nk_irreducible,
                               const unsigned int *map_to_irreducible_k,
