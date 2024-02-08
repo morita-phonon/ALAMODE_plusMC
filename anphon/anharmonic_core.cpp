@@ -1527,6 +1527,8 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
     {
         allocate(energy_tmp, 3, nk);
         allocate(weight_tetra, 3, nk);
+        bool **map_tetra_tmp;
+        allocate(map_tetra_tmp, 3, dos->tetra_nodes_dos->get_ntetra());
 
 #ifdef _OPENMP
 #pragma omp for
@@ -1534,6 +1536,14 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
         for (ib = 0; ib < ns2; ++ib) {
             is = ib / ns;
             js = ib % ns;
+            if(js==0){
+                //set map_tetra_tmp[i]
+                for(i=0;i<3;i++){
+                    for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                        map_tetra_tmp[i][ik]=map_tetra[ik];
+                    }
+                }
+            }
 
             for (k1 = 0; k1 < nk; ++k1) {
                 if(!map_contained[k1])continue;
@@ -1550,11 +1560,13 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
             }
 
             for (i = 0; i < 3; ++i) {
-                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra,
+                bool flag_ascend=true;
+                if(i==1)flag_ascend=false;
+                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
                                                      energy_tmp[i], omega_in,
                                                      dos->tetra_nodes_dos->get_ntetra(),
                                                      dos->tetra_nodes_dos->get_tetras(),
-                                                     weight_tetra[i]);
+                                                     weight_tetra[i],flag_ascend);
             }
 
             for (ik = 0; ik < npair_uniq; ++ik) {
@@ -1566,6 +1578,7 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
 
         deallocate(energy_tmp);
         deallocate(weight_tetra);
+        deallocate(map_tetra_tmp);
     }
     deallocate(map_tetra);
     deallocate(map_knum2ik);
@@ -1804,6 +1817,8 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
     {
         allocate(energy_tmp, 3, nk);
         allocate(weight_tetra, 3, nk);
+        bool **map_tetra_tmp;
+        allocate(map_tetra_tmp, 3, dos->tetra_nodes_dos->get_ntetra());
 
 #ifdef _OPENMP
 #pragma omp for
@@ -1811,6 +1826,14 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
         for (ib = 0; ib < ns2; ++ib) {
             is = ib / ns;
             js = ib % ns;
+            if(js==0){
+                //set map_tetra_tmp[i]
+                for(i=0;i<3;i++){
+                    for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                        map_tetra_tmp[i][ik]=map_tetra[ik];
+                    }
+                }
+            }
 
             for (k1 = 0; k1 < nk; ++k1) {
                 if(!map_contained[k1])continue;
@@ -1827,11 +1850,13 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
             }
 
             for (i = 0; i < 3; ++i) {
-                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra,
+                bool flag_ascend=true;
+                if(i==1)flag_ascend=false;
+                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
                                                      energy_tmp[i], omega_in,
                                                      dos->tetra_nodes_dos->get_ntetra(),
                                                      dos->tetra_nodes_dos->get_tetras(),
-                                                     weight_tetra[i]);
+                                                     weight_tetra[i],flag_ascend);
             }
 
             for (ik = 0; ik < npair_uniq; ++ik) {
@@ -1843,6 +1868,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
 
         deallocate(energy_tmp);
         deallocate(weight_tetra);
+        deallocate(map_tetra_tmp);
     }
 
     deallocate(map_tetra);

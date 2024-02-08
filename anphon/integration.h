@@ -105,12 +105,13 @@ public:
 
     void calc_weight_tetrahedron_irr(const unsigned int nk_irreducible,
                                  const unsigned int *map_to_irreducible_k,
-                                 const bool *map_tetra,
+                                 bool *map_tetra,
                                  const double *energy,
                                  const double e_ref,
                                  const unsigned int ntetra,
                                  const unsigned int *const *tetras,
-                                 double *weight) const;
+                                 double *weight,
+                                 bool is_ascend) const;
 
     void calc_weight_smearing(const unsigned int nk,
                               const unsigned int nk_irreducible,

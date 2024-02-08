@@ -306,12 +306,13 @@ void Integration::calc_weight_tetrahedron(const unsigned int nk_irreducible,
 
 void Integration::calc_weight_tetrahedron_irr(const unsigned int nk_irreducible,
                                           const unsigned int *map_to_irreducible_k,
-                                          const bool *map_tetra,
+                                          bool *map_tetra,
                                           const double *energy,
                                           const double e_ref,
                                           const unsigned int ntetra,
                                           const unsigned int *const *tetras,
-                                          double *weight) const
+                                          double *weight,
+                                          bool is_ascend) const
 {
     int i;
 
@@ -371,6 +372,10 @@ void Integration::calc_weight_tetrahedron_irr(const unsigned int nk_irreducible,
             I3 = g * fij(e3, e1, e_ref);
             I4 = g * fij(e4, e1, e_ref);
 
+        } else if (e_ref < e1 && is_ascend){//e1 will not decrease when is_ascend is true
+            map_tetra[i]=false;
+        } else if (e_ref > e4 && !is_ascend){//e1 will not increase when is_ascend is false
+            map_tetra[i]=false;
         }
         weight[k1] += I1;
         weight[k2] += I2;
