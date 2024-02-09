@@ -112,7 +112,8 @@ void Input::parse_general_vars()
             "ISMEAR", "EPSILON", "EMIN", "EMAX", "DELTA_E", "RESTART",  // "TREVSYM",
             "NKD", "KD", "MASS", "TRISYM", "PREC_EWALD", "CLASSICAL", "BCONNECT", "BORNSYM",
             "VERBOSITY",
-            "MC_METHOD","SAMPLE","SAMPLE_DENSITY"
+            "MC_METHOD","SAMPLE","SAMPLE_DENSITY",
+            "CUTOFF","CUTOFF_SCALE"
     };
 
     std::vector<std::string> no_defaults{"PREFIX", "MODE", "FCSXML", "NKD", "KD"};
@@ -214,6 +215,9 @@ void Input::parse_general_vars()
     auto epsilon = 10.0;
     auto na_sigma = 0.1;
 
+    int cutoff_eps=0;
+    double cutoff_eps_scale=2;
+
     // Assign given values
 
     assign_val(Tmin, "TMIN", general_var_dict);
@@ -254,6 +258,11 @@ void Input::parse_general_vars()
         }else{
             use_sample_density=true;
         }
+    }
+    
+    assign_val(cutoff_eps, "CUTOFF", general_var_dict);
+    if(cutoff_eps>0){
+        assign_val(cutoff_eps_scale, "CUTOFF_SCALE", general_var_dict);
     }
 
     if (band_connection > 2) {
@@ -352,6 +361,13 @@ void Input::parse_general_vars()
         anharmonic_core->nsample_input=nsample;
         anharmonic_core->sample_density=sample_density;
         anharmonic_core->use_sample_density=use_sample_density;
+    }
+
+    if(cutoff_eps>0){
+        integration->cutoff_eps=true;
+        integration->cutoff_eps_scale=cutoff_eps_scale;
+    }else{
+        integration->cutoff_eps=false;
     }
 
     general_var_dict.clear();

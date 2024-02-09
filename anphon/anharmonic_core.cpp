@@ -773,6 +773,9 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
 
     const auto epsilon = integration->epsilon;
 
+    bool cutoff=integration->cutoff_eps;
+    double cutoff_val=integration->cutoff_eps_scale*epsilon;
+
     std::vector<KsListGroup> triplet;
 
     kmesh_in->get_unique_triplet_k(ik_in,
@@ -807,20 +810,38 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
                 arr[2] = ns * k2 + js;
                 omega_inner[1] = eval_in[k2][js];
 
-                if (integration->ismear == 0) {
-                    delta_arr[ik][ns * is + js][0]
-                            = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
-                              - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
-                    delta_arr[ik][ns * is + js][1]
-                            = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
-                              - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
-                } else if (integration->ismear == 1) {
-                    delta_arr[ik][ns * is + js][0]
-                            = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
-                              - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
-                    delta_arr[ik][ns * is + js][1]
-                            = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
-                              - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                if(cutoff){
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    }
+                }else{
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    }
                 }
             }
         }
@@ -841,11 +862,13 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
             arr[1] = ns * k1 + is;
             arr[2] = ns * k2 + js;
 
-            v3_arr[ik][ib] = std::norm(V3(arr,
-                                          kmesh_in->xk,
-                                          eval_in,
-                                          evec_in,
-                                          phase_storage_dos)) * multi;
+            if (delta_arr[ik][ib][0] > 0.0 || std::abs(delta_arr[ik][ib][1]) > 0.0) {
+                v3_arr[ik][ib] = std::norm(V3(arr,
+                                            kmesh_in->xk,
+                                            eval_in,
+                                            evec_in,
+                                            phase_storage_dos)) * multi;
+            }
         }
     }
 
@@ -988,6 +1011,9 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
 
     const auto epsilon = integration->epsilon;
 
+    bool cutoff=integration->cutoff_eps;
+    double cutoff_val=integration->cutoff_eps_scale*epsilon;
+
     std::vector<KsListGroup> triplet;
 
     kmesh_in->get_unique_triplet_k(ik_in,
@@ -1003,39 +1029,61 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
 
     const auto knum = kmesh_in->kpoint_irred_all[ik_in][0].knum;
     const auto knum_minus = kmesh_in->kindex_minus_xk[knum];
+
+    
+    if(method=="SPS" || method=="WSPS"){
 #ifdef _OPENMP
 #pragma omp parallel for private(multi, arr, k1, k2, is, js, omega_inner)
 #endif
-    for (ik = 0; ik < npair_uniq; ++ik) {
-        multi = static_cast<double>(triplet[ik].group.size());
+        for (ik = 0; ik < npair_uniq; ++ik) {
+            multi = static_cast<double>(triplet[ik].group.size());
 
-        arr[0] = ns * knum_minus + is_in;
+            arr[0] = ns * knum_minus + is_in;
 
-        k1 = triplet[ik].group[0].ks[0];
-        k2 = triplet[ik].group[0].ks[1];
+            k1 = triplet[ik].group[0].ks[0];
+            k2 = triplet[ik].group[0].ks[1];
 
-        for (is = 0; is < ns; ++is) {
-            arr[1] = ns * k1 + is;
-            omega_inner[0] = eval_in[k1][is];
+            for (is = 0; is < ns; ++is) {
+                arr[1] = ns * k1 + is;
+                omega_inner[0] = eval_in[k1][is];
 
-            for (js = 0; js < ns; ++js) {
-                arr[2] = ns * k2 + js;
-                omega_inner[1] = eval_in[k2][js];
+                for (js = 0; js < ns; ++js) {
+                    arr[2] = ns * k2 + js;
+                    omega_inner[1] = eval_in[k2][js];
 
-                if (integration->ismear == 0) {
-                    delta_arr[ik][ns * is + js][0]
-                            = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
-                              - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
-                    delta_arr[ik][ns * is + js][1]
-                            = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
-                              - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
-                } else if (integration->ismear == 1) {
-                    delta_arr[ik][ns * is + js][0]
-                            = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
-                              - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
-                    delta_arr[ik][ns * is + js][1]
-                            = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
-                              - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    if(cutoff){
+                        if (integration->ismear == 0) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                    - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                    - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                        } else if (integration->ismear == 1) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                    - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                    - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                        }
+                    }else{
+                        if (integration->ismear == 0) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                    - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                    - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                        } else if (integration->ismear == 1) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                    - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                    - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                        }
+                    }
                 }
             }
         }
@@ -1218,10 +1266,51 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             sample_id_arr[0][mcid]=rand_gen(mt);
         }
         std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
-        /*for(mcid=0;mcid<nsample;mcid++){
-            std::cout << sample_id_arr[0][mcid] << " ";
+        for (i = 0; i < nrep_sample; ++i) {
+            for(mcid=0;mcid<nsample;mcid++){
+                ik=sample_id_arr[0][mcid]/ns2;
+                int ib=sample_id_arr[0][mcid]%ns2;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                is = ib / ns;
+                js = ib % ns;
+                omega_inner[0] = eval_in[k1][is];
+                omega_inner[1] = eval_in[k2][js];
+                if(cutoff){
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    }
+                }else{
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    }
+                }
+            }
         }
-        std::cout << std::endl;*/
     }
     if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         if (mympi->my_rank == 0) {

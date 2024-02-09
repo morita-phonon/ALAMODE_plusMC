@@ -53,6 +53,9 @@ void Integration::setup_integration()
         } else if (ismear == 0) {
             std::cout << " ISMEAR = 0: Lorentzian broadening with epsilon = "
                       << std::fixed << std::setprecision(2) << epsilon << " (cm^-1)" << std::endl;
+            if(cutoff_eps){
+                std::cout << " !!Warning : cutoff of Lorentzian broadening is dengerous and might have large error!!" << std::endl;
+            }
         } else if (ismear == 1) {
             std::cout << " ISMEAR = 1: Gaussian broadening with epsilon = "
                       << std::fixed << std::setprecision(2) << epsilon << " (cm^-1)" << std::endl;
@@ -64,6 +67,8 @@ void Integration::setup_integration()
 
     epsilon *= time_ry / Hz_to_kayser; // Convert epsilon to a.u.
     MPI_Bcast(&epsilon, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&cutoff_eps, 1, MPI::BOOL, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&cutoff_eps_scale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 }
 
 void TetraNodes::setup()
