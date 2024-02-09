@@ -325,6 +325,21 @@ void Integration::calc_weight_tetrahedron_irr(const unsigned int nk_irreducible,
     for (i = 0; i < ntetra; ++i) {
         
         if(!map_tetra[i])continue;
+        if(energy[tetras[i][0]] > e_ref){
+            if(energy[tetras[i][1]] > e_ref && energy[tetras[i][2]] > e_ref && energy[tetras[i][3]] > e_ref){
+                if(is_ascend){
+                    map_tetra[i]=false;
+                }
+                continue;
+            }
+        }else{
+            if(energy[tetras[i][1]] < e_ref && energy[tetras[i][2]] < e_ref && energy[tetras[i][3]] < e_ref){
+                if(!is_ascend){
+                    map_tetra[i]=false;
+                }
+                continue;
+            }
+        }
         for (int j = 0; j < 4; ++j) {
             e_tmp[j] = energy[tetras[i][j]];
             kindex[j] = map_to_irreducible_k[tetras[i][j]];
@@ -396,6 +411,15 @@ void Integration::calc_weight_tetrahedron_each(double *e_tmp,
     double g;
     int sort_arg[4];
     for (i = 0; i < 4; ++i) weight[i] = 0.0;
+    if(e_tmp[0] > e_ref){
+        if(e_tmp[1] > e_ref && e_tmp[2] > e_ref && e_tmp[3] > e_ref){
+            return;
+        }
+    }else{
+        if(e_tmp[1] < e_ref && e_tmp[2] < e_ref && e_tmp[3] < e_ref){
+            return;
+        }
+    }
 
     insertion_sort(e_tmp, sort_arg, 4);
     const auto e1 = e_tmp[0];
