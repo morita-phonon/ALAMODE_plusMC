@@ -2149,8 +2149,16 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
         allocate(map_tetra_length, nk);
         for(i=0;i<nk;i++) map_tetra_length[i]=0;
         for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            int k1_pre_arr[3];
             for(int j=0;j<4;j++){
                 int k1_tmp=dos->tetra_nodes_dos->get_tetras()[i][j];
+                //remove multiple count
+                bool is_found=false;
+                for(int k=0;k<j;k++){
+                    if(k1_pre_arr[k]==k1_tmp)is_found=true; //if k1_tmp is already stored i_tetra, skip store
+                }
+                k1_pre_arr[j]=k1_tmp;
+                if(is_found)continue;
                 map_tetra[k1_tmp][map_tetra_length[k1_tmp]]=i;
                 map_tetra_length[k1_tmp]+=1;
                 if(map_tetra_length[k1_tmp]>40){
