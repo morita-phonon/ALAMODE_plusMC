@@ -1257,7 +1257,12 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             }
             //for-roop of mc_sample is finished
         }
-    // finish sample generation using SPS
+        // finish sample generation using SPS
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
     }else if(method == "SIMPLE"){
         allocate(sample_id_arr, nrep_sample, nsample);
         std::uniform_int_distribution<> rand_gen(0, npair_uniq * ns * ns-1);
@@ -1266,6 +1271,11 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
             sample_id_arr[0][mcid]=rand_gen(mt);
         }
         std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
         for (i = 0; i < nrep_sample; ++i) {
             for(mcid=0;mcid<nsample;mcid++){
                 ik=sample_id_arr[0][mcid]/ns2;
@@ -1311,13 +1321,14 @@ void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
                 }
             }
         }
-    }
-    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        
         if (mympi->my_rank == 0) {
             now = std::chrono::system_clock::now();
-            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
             start = std::chrono::system_clock::now();
         }
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
         //calculate V3 and store it into v3_map
         allocate(calculated_v3_map, npair_uniq, ns2);
         //set zero
