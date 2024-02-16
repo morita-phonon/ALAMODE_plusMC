@@ -1622,7 +1622,7 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
     }
 
 #ifdef _OPENMP
-#pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
+#pragma omp parallel private(ib, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
 #endif
     {
         allocate(energy_tmp, 3, nk);
@@ -1633,46 +1633,44 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
 #ifdef _OPENMP
 #pragma omp for
 #endif
-        for (ib = 0; ib < ns2; ++ib) {
-            is = ib / ns;
-            js = ib % ns;
-            if(js==0){
-                //set map_tetra_tmp[i]
-                for(i=0;i<3;i++){
-                    for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
-                        map_tetra_tmp[i][ik]=map_tetra[ik];
-                    }
+        for (is = 0; is < ns; ++is) {
+            //set map_tetra_tmp[i]
+            for(i=0;i<3;i++){
+                for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                    map_tetra_tmp[i][ik]=map_tetra[ik];
                 }
             }
+            for (js = 0; js < ns; ++js) {
+                ib=is*ns+js;
+                for (k1 = 0; k1 < nk; ++k1) {
+                    if(!map_contained[k1])continue;
 
-            for (k1 = 0; k1 < nk; ++k1) {
-                if(!map_contained[k1])continue;
+                    // Prepare two-phonon frequency for the tetrahedron method
 
-                // Prepare two-phonon frequency for the tetrahedron method
+                    for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
 
-                for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
+                    k2 = kmesh_in->get_knum(xk_tmp);
 
-                k2 = kmesh_in->get_knum(xk_tmp);
+                    energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
+                    energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
+                    energy_tmp[2][k1] = -energy_tmp[1][k1];
+                }
 
-                energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
-                energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
-                energy_tmp[2][k1] = -energy_tmp[1][k1];
-            }
+                for (i = 0; i < 3; ++i) {
+                    bool flag_ascend=true;
+                    if(i==1)flag_ascend=false;
+                    integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
+                                                        energy_tmp[i], omega_in,
+                                                        dos->tetra_nodes_dos->get_ntetra(),
+                                                        dos->tetra_nodes_dos->get_tetras(),
+                                                        weight_tetra[i],flag_ascend);
+                }
 
-            for (i = 0; i < 3; ++i) {
-                bool flag_ascend=true;
-                if(i==1)flag_ascend=false;
-                integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
-                                                     energy_tmp[i], omega_in,
-                                                     dos->tetra_nodes_dos->get_ntetra(),
-                                                     dos->tetra_nodes_dos->get_tetras(),
-                                                     weight_tetra[i],flag_ascend);
-            }
-
-            for (ik = 0; ik < npair_uniq; ++ik) {
-                jk = triplet[ik].group[0].ks[0];
-                delta_arr[ik][ib][0] = weight_tetra[0][jk];
-                delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                for (ik = 0; ik < npair_uniq; ++ik) {
+                    jk = triplet[ik].group[0].ks[0];
+                    delta_arr[ik][ib][0] = weight_tetra[0][jk];
+                    delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                }
             }
         }
 
@@ -1913,7 +1911,7 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
         }
 
     #ifdef _OPENMP
-    #pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
+    #pragma omp parallel private(ib, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
     #endif
         {
             allocate(energy_tmp, 3, nk);
@@ -1924,46 +1922,45 @@ void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
     #ifdef _OPENMP
     #pragma omp for
     #endif
-            for (ib = 0; ib < ns2; ++ib) {
-                is = ib / ns;
-                js = ib % ns;
-                if(js==0){
-                    //set map_tetra_tmp[i]
-                    for(i=0;i<3;i++){
-                        for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
-                            map_tetra_tmp[i][ik]=map_tetra[ik];
-                        }
+            for (is = 0; is < ns; ++is) {
+            //set map_tetra_tmp[i]
+                for(i=0;i<3;i++){
+                    for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                        map_tetra_tmp[i][ik]=map_tetra[ik];
                     }
                 }
+                for (js = 0; js < ns; ++js) {
+                    ib=is*ns+js;
 
-                for (k1 = 0; k1 < nk; ++k1) {
-                    if(!map_contained[k1])continue;
+                    for (k1 = 0; k1 < nk; ++k1) {
+                        if(!map_contained[k1])continue;
 
-                    // Prepare two-phonon frequency for the tetrahedron method
+                        // Prepare two-phonon frequency for the tetrahedron method
 
-                    for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
+                        for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
 
-                    k2 = kmesh_in->get_knum(xk_tmp);
+                        k2 = kmesh_in->get_knum(xk_tmp);
 
-                    energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
-                    energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
-                    energy_tmp[2][k1] = -energy_tmp[1][k1];
-                }
+                        energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
+                        energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
+                        energy_tmp[2][k1] = -energy_tmp[1][k1];
+                    }
 
-                for (i = 0; i < 3; ++i) {
-                    bool flag_ascend=true;
-                    if(i==1)flag_ascend=false;
-                    integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
-                                                        energy_tmp[i], omega_in,
-                                                        dos->tetra_nodes_dos->get_ntetra(),
-                                                        dos->tetra_nodes_dos->get_tetras(),
-                                                        weight_tetra[i],flag_ascend);
-                }
+                    for (i = 0; i < 3; ++i) {
+                        bool flag_ascend=true;
+                        if(i==1)flag_ascend=false;
+                        integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
+                                                            energy_tmp[i], omega_in,
+                                                            dos->tetra_nodes_dos->get_ntetra(),
+                                                            dos->tetra_nodes_dos->get_tetras(),
+                                                            weight_tetra[i],flag_ascend);
+                    }
 
-                for (ik = 0; ik < npair_uniq; ++ik) {
-                    jk = triplet[ik].group[0].ks[0];
-                    delta_arr[ik][ib][0] = weight_tetra[0][jk];
-                    delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                    for (ik = 0; ik < npair_uniq; ++ik) {
+                        jk = triplet[ik].group[0].ks[0];
+                        delta_arr[ik][ib][0] = weight_tetra[0][jk];
+                        delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                    }
                 }
             }
 
