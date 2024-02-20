@@ -240,6 +240,11 @@ void Writes::setup_result_io()
                 exit("setup_result_io",
                      "Could not open file_result");
             }
+            fs_err.open("MC_err.log", std::ios::in | std::ios::out);
+            if (!fs_err) {
+                exit("setup_result_io",
+                     "Could not open file_err");
+            }
 
             // Check the consistency
 
@@ -378,6 +383,12 @@ void Writes::setup_result_io()
             if (!fs_result) {
                 exit("setup_result_io",
                      "Could not open file_result");
+            }
+
+            fs_err.open("MC_err.log", std::ios::out);
+            if (!fs_err) {
+                exit("setup_result_io",
+                     "Could not open file_err");
             }
 
             fs_result << "## General information" << std::endl;

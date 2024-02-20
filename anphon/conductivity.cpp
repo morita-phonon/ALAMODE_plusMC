@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iomanip>
 #include <vector>
+#include <chrono>
 
 using namespace PHON_NS;
 
@@ -61,6 +62,9 @@ void Conductivity::deallocate_variables()
 {
     if (damping3) {
         deallocate(damping3);
+    }
+    if (rel_err) {
+        deallocate(rel_err);
     }
     if (kappa) {
         deallocate(kappa);
@@ -104,8 +108,10 @@ void Conductivity::setup_kappa()
 
     if (nrem > 0) {
         allocate(damping3, (nks_each_thread + 1) * mympi->nprocs, ntemp);
+        allocate(rel_err, (nks_each_thread + 1) * mympi->nprocs, ntemp);
     } else {
         allocate(damping3, nks_total, ntemp);
+        allocate(rel_err, nks_total, ntemp);
     }
 
     const auto factor = Bohr_in_Angstrom * 1.0e-10 / time_ry;
@@ -207,6 +213,33 @@ void Conductivity::prepare_restart()
                     vks_done.push_back(nks_tmp);
                 }
             }
+
+            try {
+                double* err_calc_tmp;
+                allocate(err_calc_tmp,ntemp);
+                while (!writes->fs_err.eof()) {
+                    for (i = 0; i < ntemp; ++i) {
+                        writes->fs_err >> err_calc_tmp[i];  //read calculated error for each T
+                    }
+                    writes->fs_err >> line_tmp;  //dummy, #GAMMA_EACH
+                    writes->fs_err >> nk_tmp >> ns_tmp;
+                    const auto nks_tmp = (nk_tmp - 1) * ns + ns_tmp - 1;
+                    //for debug
+                    //std::cout << nk_tmp << " " << ns_tmp;
+                    for (i = 0; i < ntemp; ++i) {
+                        rel_err[nks_tmp][i]=err_calc_tmp[i];
+                        //for debug
+                        //std::cout << " " << rel_err[nks_tmp][i];
+                    }
+                    //for debug
+                    //std::cout << std::endl;
+                }
+                writes->fs_err.clear();
+                deallocate(err_calc_tmp);
+            }catch (...){
+                std::cerr << "error is detected in MC_err.log" << std::endl;
+                std::exit(1);
+            }
         }
 
         writes->fs_result.close();
@@ -255,6 +288,14 @@ void Conductivity::calc_anharmonic_imagself()
     unsigned int i;
     unsigned int *nks_thread = nullptr;
     double *damping3_loc = nullptr;
+    double *std_ret = nullptr;
+
+    //initialize time elapsed
+    anharmonic_core->elapsed_com=0;
+    anharmonic_core->elapsed_SPS=0;
+    anharmonic_core->elapsed_sample=0;
+    anharmonic_core->elapsed_V3=0;
+    anharmonic_core->elapsed_other=0;
 
     // Distribute (k,s) to individual MPI threads
 
@@ -287,6 +328,19 @@ void Conductivity::calc_anharmonic_imagself()
             std::cout << " RANK: " << std::setw(5) << i + 1;
             std::cout << std::setw(8) << "MODES: " << std::setw(5) << nks_thread[i] << std::endl;
         }
+        if(anharmonic_core->integration_method>0){
+            std::cout << std::endl;
+            std::cout << " Monte-Carlo integration is active : " << std::endl;
+            std::cout << "  Monte-Carlo integration mode is " << anharmonic_core->integration_method
+             << std::endl;
+            std::cout << "  Sample type is ";
+            if(anharmonic_core->use_sample_density){
+                std::cout << "density : " << anharmonic_core->sample_density*100
+                 << "%" << std::endl;
+            }else{
+                std::cout << "number : " << anharmonic_core->nsample_input << std::endl;
+            }
+        }
         std::cout << std::endl << std::flush;
 
         deallocate(nks_thread);
@@ -305,6 +359,7 @@ void Conductivity::calc_anharmonic_imagself()
     }
 
     allocate(damping3_loc, ntemp);
+    allocate(std_ret,ntemp);
 
     for (i = 0; i < nk_tmp; ++i) {
 
@@ -320,9 +375,11 @@ void Conductivity::calc_anharmonic_imagself()
             const auto snum = iks % ns;
 
             const auto omega = dos->dymat_dos->get_eigenvalues()[knum][snum];
-
+            
             if (integration->ismear == 0 || integration->ismear == 1) {
-                anharmonic_core->calc_damping_smearing(ntemp,
+                
+                if(anharmonic_core->integration_method<=0){
+                    anharmonic_core->calc_damping_smearing(ntemp,
                                                        temperature,
                                                        omega,
                                                        iks / ns,
@@ -331,8 +388,21 @@ void Conductivity::calc_anharmonic_imagself()
                                                        dos->dymat_dos->get_eigenvalues(),
                                                        dos->dymat_dos->get_eigenvectors(),
                                                        damping3_loc);
+                }else{
+                    anharmonic_core->calc_damping_smearing_MC(ntemp,
+                                                       temperature,
+                                                       omega,
+                                                       iks / ns,
+                                                       snum,
+                                                       dos->kmesh_dos,
+                                                       dos->dymat_dos->get_eigenvalues(),
+                                                       dos->dymat_dos->get_eigenvectors(),
+                                                       damping3_loc,
+                                                       std_ret);
+                }
             } else if (integration->ismear == -1) {
-                anharmonic_core->calc_damping_tetrahedron(ntemp,
+                if(anharmonic_core->integration_method<=0){
+                    anharmonic_core->calc_damping_tetrahedron(ntemp,
                                                           temperature,
                                                           omega,
                                                           iks / ns,
@@ -341,19 +411,58 @@ void Conductivity::calc_anharmonic_imagself()
                                                           dos->dymat_dos->get_eigenvalues(),
                                                           dos->dymat_dos->get_eigenvectors(),
                                                           damping3_loc);
+                }else{
+                    anharmonic_core->calc_damping_tetrahedron_MC(ntemp,
+                                                          temperature,
+                                                          omega,
+                                                          iks / ns,
+                                                          snum,
+                                                          dos->kmesh_dos,
+                                                          dos->dymat_dos->get_eigenvalues(),
+                                                          dos->dymat_dos->get_eigenvectors(),
+                                                          damping3_loc,
+                                                          std_ret);
+                }
             }
         }
-
+        std::chrono::system_clock::time_point  start, now;
+        if (mympi->my_rank == 0) {
+            start = std::chrono::system_clock::now();
+        }
         MPI_Gather(&damping3_loc[0], ntemp, MPI_DOUBLE,
                    damping3[nshift_restart + i * mympi->nprocs], ntemp,
                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        
+        MPI_Gather(&std_ret[0], ntemp, MPI_DOUBLE,
+                   rel_err[nshift_restart + i * mympi->nprocs], ntemp,
+                   MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
         if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            anharmonic_core->elapsed_com += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+
+        if (mympi->my_rank == 0) {
+            //if MC_integration is active, 
+            //note that some message is already shown in function calc_damping_smearing_MC
             write_result_gamma(i, nshift_restart, vel, damping3);
-            std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
+            if(anharmonic_core->integration_method<=0){
+                std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
+            }else{
+                write_result_err(i, nshift_restart, vel, rel_err);
+                //std::cout << anharmonic_core->std_ret[0];
+                std::cout << " MODE " << std::setw(5) << i + 1 << ", SPS:"
+                 << anharmonic_core->elapsed_SPS  << ", sample:" 
+                 << anharmonic_core->elapsed_sample  << ", V3:" 
+                 << anharmonic_core->elapsed_V3  << ", other:"
+                 << anharmonic_core->elapsed_other  << ", com:"  
+                 << anharmonic_core->elapsed_com << std::endl << std::flush;
+            }
         }
     }
     deallocate(damping3_loc);
+    deallocate(std_ret);
 }
 
 void Conductivity::write_result_gamma(const unsigned int ik,
@@ -388,6 +497,30 @@ void Conductivity::write_result_gamma(const unsigned int ik,
                               << damp_in[iks_g][k] * Hz_to_kayser / time_ry << std::endl;
         }
         writes->fs_result << "#END GAMMA_EACH" << std::endl;
+    }
+}
+
+void Conductivity::write_result_err(const unsigned int ik,
+                                      const unsigned int nshift,
+                                      double ***vel_in,
+                                      double **ret_err) const
+{
+    const unsigned int np = mympi->nprocs;
+    unsigned int k;
+
+    for (unsigned int j = 0; j < np; ++j) {
+
+        const auto iks_g = ik * np + j + nshift;
+
+        if (iks_g >= dos->kmesh_dos->nk_irred * ns) break;
+
+        for (k = 0; k < ntemp; ++k) {
+            writes->fs_err << std::setw(15) << std::scientific
+                              << ret_err[iks_g][k];
+        }
+
+        writes->fs_err << " #" << "GAMMA_EACH  ";
+        writes->fs_err << iks_g / ns + 1 << " " << iks_g % ns + 1 << std::endl;
     }
 }
 
@@ -565,6 +698,11 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
     const auto nk_irred = kmesh_in->nk_irred;
     allocate(kappa_mode, ntemp, 9, ns, nk_irred);
 
+    double ***kappa_err;
+    if(anharmonic_core->integration_method>0){
+        allocate(kappa_err,ntemp,3,3);
+    }
+
     for (i = 0; i < ntemp; ++i) {
         for (unsigned int j = 0; j < 3; ++j) {
             for (unsigned int k = 0; k < 3; ++k) {
@@ -608,13 +746,34 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
                 }
 
                 kappa_intra[i][j][k] = 0.0;
+                if(anharmonic_core->integration_method>0){
+                    kappa_err[i][j][k] = 0.0;
+                }
 
                 for (is = 0; is < ns; ++is) {
                     for (ik = 0; ik < nk_irred; ++ik) {
                         kappa_intra[i][j][k] += kappa_mode[i][3 * j + k][is][ik];
+                        if(anharmonic_core->integration_method>0){
+                            /*for debug*/
+                            //std::cout << "rel_err[" << ns * ik + is << "][" << i << "] = " << rel_err[ns * ik + is][i] << " ";
+                            //std::cout << "kappa_mode[" << is << "][" << ik << "] = " << kappa_mode[i][3 * j + k][is][ik] << std::endl;
+                            kappa_err[i][j][k] += rel_err[ns * ik + is][i]*rel_err[ns * ik + is][i]
+                                                    *kappa_mode[i][3 * j + k][is][ik]*kappa_mode[i][3 * j + k][is][ik];
+                                                    //variance of kappa_mode
+
+                            //kappa_err[i][j][k] += rel_err[ns * ik + is][i]*std::abs(kappa_mode[i][3 * j + k][is][ik]);
+                            // calculate simple summation of standard error 
+                            // when there is a bias, this estimation is more reasonable
+                        }
                     }
                 }
+                if(anharmonic_core->integration_method>0){
+                    kappa_err[i][j][k]=sqrt(kappa_err[i][j][k])/kappa_intra[i][j][k];
+                    // calculate relative deviation of kappa
 
+                    // kappa_err[i][j][k] = kappa_err[i][j][k]/kappa_intra[i][j][k];
+                    // calculate error due to bias
+                }
                 kappa_intra[i][j][k] /= static_cast<double>(nk);
             }
         }
@@ -631,6 +790,21 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
     }
 
     deallocate(kappa_mode);
+    if(anharmonic_core->integration_method>0){
+        std::cout << std::endl << "Thermal conductivity calculation is finished" << std::endl;
+        std::cout << " Estimated error sigma_err : " << std::endl;
+        std::cout << " T [K] |kxx       |kxy       |kxz       |kyx       |kyy       |kyz       |kzx       |kzy       |kzz [%]    " << std::endl;
+        for (i = 0; i < ntemp; ++i) {
+            std::cout << "  " << std::setw(6) << std::fixed << static_cast<int>(temperature[i]);
+            for (unsigned int j = 0; j < 3; ++j) {
+                for (unsigned int k = 0; k < 3; ++k) {
+                    std::cout << std::fixed << std::setw(11) << kappa_err[i][j][k]*100;
+                }
+            }
+            std::cout << std::endl;
+        }
+        deallocate(kappa_err);
+    }
 }
 
 void Conductivity::compute_kappa_coherent(const KpointMeshUniform *kmesh_in,

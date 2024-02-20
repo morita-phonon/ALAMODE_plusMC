@@ -86,6 +86,8 @@ public:
 
     int ismear; // ismear = -1: tetrahedron, ismear = 0: gaussian
     double epsilon;
+    bool cutoff_eps;
+    double cutoff_eps_scale;
 
     void setup_integration();
 
@@ -101,6 +103,21 @@ public:
                                  const double e_ref,
                                  const unsigned int ntetra,
                                  const unsigned int *const *tetras,
+                                 double *weight) const;
+
+    void calc_weight_tetrahedron_irr(const unsigned int nk_irreducible,
+                                 const unsigned int *map_to_irreducible_k,
+                                 bool *map_tetra,
+                                 const double *energy,
+                                 const double e_ref,
+                                 const unsigned int ntetra,
+                                 const unsigned int *const *tetras,
+                                 double *weight,
+                                 bool is_ascend) const;
+
+    void calc_weight_tetrahedron_each(double *e_tmp, 
+                                 const double e_ref, 
+                                 const unsigned int ntetra, 
                                  double *weight) const;
 
     void calc_weight_smearing(const unsigned int nk,
@@ -140,6 +157,22 @@ inline double delta_lorentz(const double omega,
 inline double delta_gauss(const double omega,
                           const double epsilon)
 {
+    return std::exp(-omega * omega / (epsilon * epsilon)) / (epsilon * std::sqrt(pi));
+}
+
+inline double delta_lorentz(const double omega,
+                            const double epsilon,
+                            const double cutoff_val)
+{
+    if(omega>cutoff_val)return 0;
+    return inverse_pi * epsilon / (omega * omega + epsilon * epsilon);
+}
+
+inline double delta_gauss(const double omega,
+                          const double epsilon,
+                          const double cutoff_val)
+{
+    if(omega>cutoff_val)return 0;
     return std::exp(-omega * omega / (epsilon * epsilon)) / (epsilon * std::sqrt(pi));
 }
 }

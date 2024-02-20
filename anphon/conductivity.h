@@ -40,6 +40,9 @@ public:
     double *temperature;
     int calc_coherent;
 
+    //store relative error of gamma
+    double **rel_err;
+
 private:
     void set_default_variables();
 
@@ -54,6 +57,11 @@ private:
     std::string file_coherent_elems;
 
     void write_result_gamma(unsigned int,
+                            unsigned int,
+                            double ***,
+                            double **) const;
+
+    void write_result_err(unsigned int,
                             unsigned int,
                             double ***,
                             double **) const;

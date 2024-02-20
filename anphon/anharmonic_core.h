@@ -106,6 +106,17 @@ public:
                                const std::complex<double> *const *const *evec_in,
                                double *ret);
 
+    void calc_damping_smearing_MC(const unsigned int ntemp,
+                               const double *temp_in,
+                               const double omega_in,
+                               const unsigned int ik_in,
+                               const unsigned int is_in,
+                               const KpointMeshUniform *kmesh_in,
+                               const double *const *eval_in,
+                               const std::complex<double> *const *const *evec_in,
+                               double *ret,
+                               double *ret_err);
+
     void calc_damping_tetrahedron(const unsigned int ntemp,
                                   const double *temp_in,
                                   const double omega_in,
@@ -116,10 +127,34 @@ public:
                                   const std::complex<double> *const *const *evec_in,
                                   double *ret);
 
+    void calc_damping_tetrahedron_MC(const unsigned int ntemp,
+                                  const double *temp_in,
+                                  const double omega_in,
+                                  const unsigned int ik_in,
+                                  const unsigned int is_in,
+                                  const KpointMeshUniform *kmesh_in,
+                                  const double *const *eval_in,
+                                  const std::complex<double> *const *const *evec_in,
+                                  double *ret,
+                                  double *ret_err);
+
     int quartic_mode;
     bool use_tuned_ver;
     bool use_triplet_symmetry;
     bool use_quartet_symmetry;
+
+    //variables for monte-carlo integration
+    int nsample_input;
+    double sample_density;
+    int integration_method;
+    bool use_sample_density;
+
+    //var for time elapse
+    double elapsed_SPS;
+    double elapsed_sample;
+    double elapsed_V3;
+    double elapsed_other;
+    double elapsed_com;
 
     std::complex<double> V3(const unsigned int [3]);
 

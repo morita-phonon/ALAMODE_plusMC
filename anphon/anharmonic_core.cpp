@@ -26,6 +26,9 @@ or http://opensource.org/licenses/mit-license.php for information.
 #include <algorithm>
 #include <vector>
 
+#include <random>
+#include <chrono>
+
 #ifdef _OPENMP
 
 #include <omp.h>
@@ -103,6 +106,10 @@ void AnharmonicCore::setup()
     sym_permutation = true;
     use_tuned_ver = true;
     MPI_Bcast(&use_tuned_ver, 1, MPI_CXX_BOOL, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&nsample_input, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&sample_density, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&integration_method, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&use_sample_density, 1, MPI_CXX_BOOL, 0, MPI_COMM_WORLD);
 
     if (fcs_phonon->maxorder >= 2) setup_cubic();
     if (fcs_phonon->maxorder >= 3) setup_quartic();
@@ -766,6 +773,9 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
 
     const auto epsilon = integration->epsilon;
 
+    bool cutoff=integration->cutoff_eps;
+    double cutoff_val=integration->cutoff_eps_scale*epsilon;
+
     std::vector<KsListGroup> triplet;
 
     kmesh_in->get_unique_triplet_k(ik_in,
@@ -800,20 +810,38 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
                 arr[2] = ns * k2 + js;
                 omega_inner[1] = eval_in[k2][js];
 
-                if (integration->ismear == 0) {
-                    delta_arr[ik][ns * is + js][0]
-                            = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
-                              - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
-                    delta_arr[ik][ns * is + js][1]
-                            = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
-                              - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
-                } else if (integration->ismear == 1) {
-                    delta_arr[ik][ns * is + js][0]
-                            = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
-                              - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
-                    delta_arr[ik][ns * is + js][1]
-                            = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
-                              - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                if(cutoff){
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    }
+                }else{
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    }
                 }
             }
         }
@@ -834,11 +862,13 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
             arr[1] = ns * k1 + is;
             arr[2] = ns * k2 + js;
 
-            v3_arr[ik][ib] = std::norm(V3(arr,
-                                          kmesh_in->xk,
-                                          eval_in,
-                                          evec_in,
-                                          phase_storage_dos)) * multi;
+            if (delta_arr[ik][ib][0] > 0.0 || std::abs(delta_arr[ik][ib][1]) > 0.0) {
+                v3_arr[ik][ib] = std::norm(V3(arr,
+                                            kmesh_in->xk,
+                                            eval_in,
+                                            evec_in,
+                                            phase_storage_dos)) * multi;
+            }
         }
     }
 
@@ -889,6 +919,606 @@ void AnharmonicCore::calc_damping_smearing(const unsigned int ntemp,
     triplet.clear();
 
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4) / static_cast<double>(nk);
+}
+
+void AnharmonicCore::calc_damping_smearing_MC(const unsigned int ntemp,
+                                           const double *temp_in,
+                                           const double omega_in,
+                                           const unsigned int ik_in,
+                                           const unsigned int is_in,
+                                           const KpointMeshUniform *kmesh_in,
+                                           const double *const *eval_in,
+                                           const std::complex<double> *const *const *evec_in,
+                                           double *ret,
+                                           double *ret_err)
+{
+    // This function returns the imaginary part of phonon self-energy 
+    // for the given frequency omega_in.
+    // Lorentzian or Gaussian smearing will be used.
+    // This version employs the crystal symmetry to reduce the computational cost
+
+    // use Monte-Carlo integration
+    // Monte-Carlo parameter is defined here (should be stored in monte-carlo class but not yet implemented)
+    int nsample=nsample_input;    //the number of sample point for MC integration
+    // reassigned after getting npair_uniq when use_sample_density is true
+    std::string method;
+    if(integration_method==1){
+        method = "SIMPLE";
+    }else if(integration_method==2){
+        method = "SPS";
+    }else if(integration_method==3){
+        method = "WSPS";
+    }else{
+        std::cerr << "Error was detected in MC_METHOD" << std::endl;
+        std::exit(1);
+    }
+    //method of MC calculation, "SIMPLE"(simple MC), 
+    //"SPS"(use important sampling based on SPS) 
+    //"WSPS"(use important sampling based on weighted SPS) 
+
+    int nrep_sample;  //the number of for-roops during sample generation
+    //since "SPS" has no temperature dependence, nrep_sample=1
+    //for "WSPS", nrep_sample=ntemp
+
+    // Monte-Carlo variables
+    std::random_device rnd; 
+    std::mt19937_64 mt(rnd());
+    double** rand_val;  //array of random values used for choosing sample point
+    //(should be sorted to efficient calculation), [id_temperature][id_sample]
+    double** v3_mc_arr; //calculated arr of V3, [id_temperature][id_sample]
+    double** calculated_v3_map;  //map of calculated v3, initialized as 0 and store calculated v3, [ik][isjs]
+    double*** map_mc;   //map for sample generation (should be ascending order for last dimention)
+    //[id_temperature][ik][isjs]
+    int*** sign_map_mc;   //sign of map_mc, [id_temperature][ik][isjs]
+    double** map_mc_ik;   //map for sample generation (should be ascending order for last dimention)
+    //[id_temperature][ik], each element contains sum_{k<=ik}(sum_{isjs}map_mc[][k][isjs])
+    int** sample_id_arr; //array of sample id, [id_temperature][id_sample]
+    double delta_tmp;    //delta part of scattering rate
+    double delta_acm;    //accumulation of delta_tmp
+    int mcid;            // < nsample
+    int ik_tmp, is_tmp;            //i
+    double rand_tmp;
+    double var_tmp;
+
+    std::chrono::system_clock::time_point  start, now;
+    if (mympi->my_rank == 0) {
+        start = std::chrono::system_clock::now();
+    }
+
+    const auto nk = kmesh_in->nk;
+    const auto ns = dynamical->neval;
+    const auto ns2 = ns * ns;
+    unsigned int i;
+    int ik;
+    unsigned int is, js;
+    unsigned int arr[3];
+
+    int k1, k2;
+
+    double T_tmp;
+    double n1, n2;
+    double omega_inner[2];
+
+    double multi;
+
+    for (i = 0; i < ntemp; ++i) ret[i] = 0.0;
+
+    double **v3_arr;
+    double ***delta_arr;
+    double ret_tmp;
+
+    double f1, f2;
+
+    const auto epsilon = integration->epsilon;
+
+    bool cutoff=integration->cutoff_eps;
+    double cutoff_val=integration->cutoff_eps_scale*epsilon;
+
+    std::vector<KsListGroup> triplet;
+
+    kmesh_in->get_unique_triplet_k(ik_in,
+                                   symmetry->SymmList,
+                                   false,
+                                   false,
+                                   triplet);
+
+    const auto npair_uniq = triplet.size();
+
+    //allocate(v3_arr, npair_uniq, ns * ns);
+    allocate(delta_arr, npair_uniq, ns * ns, 2);
+
+    const auto knum = kmesh_in->kpoint_irred_all[ik_in][0].knum;
+    const auto knum_minus = kmesh_in->kindex_minus_xk[knum];
+
+    
+    if(method=="SPS" || method=="WSPS"){
+#ifdef _OPENMP
+#pragma omp parallel for private(multi, arr, k1, k2, is, js, omega_inner)
+#endif
+        for (ik = 0; ik < npair_uniq; ++ik) {
+            multi = static_cast<double>(triplet[ik].group.size());
+
+            arr[0] = ns * knum_minus + is_in;
+
+            k1 = triplet[ik].group[0].ks[0];
+            k2 = triplet[ik].group[0].ks[1];
+
+            for (is = 0; is < ns; ++is) {
+                arr[1] = ns * k1 + is;
+                omega_inner[0] = eval_in[k1][is];
+
+                for (js = 0; js < ns; ++js) {
+                    arr[2] = ns * k2 + js;
+                    omega_inner[1] = eval_in[k2][js];
+
+                    if(cutoff){
+                        if (integration->ismear == 0) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                    - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                    - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                        } else if (integration->ismear == 1) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                    - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                    - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                        }
+                    }else{
+                        if (integration->ismear == 0) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                    - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                    - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                        } else if (integration->ismear == 1) {
+                            delta_arr[ik][ns * is + js][0]
+                                    = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                    - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                            delta_arr[ik][ns * is + js][1]
+                                    = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                    - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (mympi->my_rank == 0) {
+        now = std::chrono::system_clock::now();
+        elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+        start = std::chrono::system_clock::now();
+    }
+
+    //map_mc generation
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        //reassign nsample
+        if(use_sample_density){
+            nsample=ns2*npair_uniq*sample_density;
+        }
+        //assign nrep_sample
+        //if mode is SPS< generated samples is not dependent on temperature
+        if(method=="WSPS"){
+            nrep_sample=ntemp;
+        }else if(method=="SPS"){
+            nrep_sample=1;
+        }else if(method=="SIMPLE"){
+            nrep_sample=1;
+        }
+    }
+    if(method=="SPS" || method=="WSPS"){
+        //reassign nsample
+        if(use_sample_density){
+            nsample=ns2*npair_uniq*sample_density;
+        }
+        //assign nrep_sample
+        //if mode is SPS< generated samples is not dependent on temperature
+        if(method=="WSPS"){
+            nrep_sample=ntemp;
+        }else if(method=="SPS"){
+            nrep_sample=1;
+        }
+        allocate(map_mc, nrep_sample, npair_uniq, ns * ns);
+        allocate(sign_map_mc, nrep_sample, npair_uniq, ns * ns);
+        allocate(map_mc_ik, nrep_sample, npair_uniq);
+        for (i = 0; i < nrep_sample; ++i) {
+            T_tmp = temp_in[i];
+#ifdef _OPENMP
+#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2, delta_acm, delta_tmp)
+#endif
+            for (ik = 0; ik < npair_uniq; ++ik) {
+                delta_acm=0;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                for (is = 0; is < ns; ++is) {
+                    omega_inner[0] = eval_in[k1][is];
+                    for (js = 0; js < ns; ++js) {
+                        // get n1 and n2
+                        // mode SPS does not need n1 and n2
+                        if(method=="SPS"){
+                            n1=1;
+                            n2=1;
+                        }else if(method=="WSPS"){ //mode "WSPS" needs n1 and n2
+                            omega_inner[1] = eval_in[k2][js];
+                            if (thermodynamics->classical) {
+                                f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                                f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                                n1 = f1 + f2;
+                                n2 = f1 - f2;
+                            } else {
+                                f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                                f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                                n1 = f1 + f2 + 1.0;
+                                n2 = f1 - f2;
+                            }
+                        }
+                        delta_tmp = (n1 * delta_arr[ik][ns * is + js][0]
+                                  - n2 * delta_arr[ik][ns * is + js][1]);
+                        //get absolute value of delta_tmp and store original sign
+                        if(delta_tmp<0){
+                            delta_tmp=-delta_tmp;
+                            sign_map_mc[i][ik][ns * is + js]=-1;
+                        }else{
+                            sign_map_mc[i][ik][ns * is + js]=1;
+                        }
+                        //accumulate delta element for each ik
+                        map_mc[i][ik][ns * is + js]=delta_acm+delta_tmp;
+                        delta_acm=delta_acm+delta_tmp;
+                    }
+                }
+                //get total accumulation of delta and store into map_mc_ik
+                map_mc_ik[i][ik]=delta_acm;
+            }
+        }
+        //finished temperature roop
+        //accumulate map_mc_ik
+        //start from 1 because map_mc_ik[i][0] is OK
+        for (i = 0; i < nrep_sample; ++i) {
+            for (ik = 1; ik < npair_uniq; ++ik) {
+                map_mc_ik[i][ik]=map_mc_ik[i][ik-1]+map_mc_ik[i][ik];
+            }
+        }
+
+        //get array of random value in range of (0 map_mc_ik[i][npair_uniq-1])
+        //map_mc_ik[i][npair_uniq-1] is total value of accumulation
+        //rand_val should be sorted
+        allocate(rand_val, nrep_sample, nsample);
+        std::uniform_real_distribution<> rand_gen(0, 1);
+        for (i = 0; i < nrep_sample; ++i) {
+            double rand_max=map_mc_ik[i][npair_uniq-1];  //upper limit of rand_val
+            for(mcid=0;mcid<nsample;mcid++){
+                rand_val[i][mcid]=rand_gen(mt)*rand_max;
+            }
+            std::sort(rand_val[i],rand_val[i]+nsample);
+        }
+
+        //search sample point
+        allocate(sample_id_arr, nrep_sample, nsample);
+#ifdef _OPENMP
+#pragma omp parallel for private(delta_acm, delta_tmp, mcid, T_tmp, ik_tmp, is_tmp, rand_tmp)
+#endif
+        for (i = 0; i < nrep_sample; ++i) {
+            T_tmp = temp_in[i];
+            ik_tmp=0;
+            is_tmp=0;
+            for(mcid=0;mcid<nsample;mcid++){
+                //find position of rand_val[i][mcid] from map_mc
+                //at first, find position of rand_val[i][mcid] from map_mc_ik
+                rand_tmp=rand_val[i][mcid];
+                while(1){
+                    if(map_mc_ik[i][ik_tmp] < rand_tmp){
+                        ik_tmp++;
+                        is_tmp=0;  //since ik is updated, is_tmp should restart from 0
+                        if(ik_tmp>=npair_uniq){
+                            std::cerr << "rand_val[" << mcid << "] is too large for map_mc_ik" << std::endl;
+                            std::exit(1);
+                        }
+                    }else{
+                        break;
+                    }
+                }
+                //check rand_val
+                if(mcid>0){
+                    if(rand_tmp<rand_val[i][mcid-1]){
+                        std::cerr << "rand_val[" << mcid << "] is not ascending order" << std::endl;
+                            std::exit(1);
+                    }
+                }
+                //find position of rand_tmp from map_mc[i][ik_tmp]
+                //note map_mc is accumulation only map_mc[i][ik_each]
+                //it requires this reduction:
+                if(ik_tmp != 0){
+                    rand_tmp=rand_tmp-map_mc_ik[i][ik_tmp-1];
+                }
+                //note map_mc_ik[i][-1]=0 due to it's definition
+
+                while(1){
+                    if(map_mc[i][ik_tmp][is_tmp] < rand_tmp){
+                        is_tmp++;
+                        if(is_tmp>=ns2){
+                            std::cerr << "rand_val[" << mcid << "] is too large for map_mc" << std::endl;
+                            std::exit(1);
+                        }
+                    }else{
+                        break;
+                    }
+                }
+
+                //now, ik_tmp and is_tmp are position of rand_val[i][mcid]
+                //store them into sample_id_arr
+                sample_id_arr[i][mcid]=ik_tmp*ns2+is_tmp;
+            }
+            //for-roop of mc_sample is finished
+        }
+        // finish sample generation using SPS
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    }else if(method == "SIMPLE"){
+        allocate(sample_id_arr, nrep_sample, nsample);
+        std::uniform_int_distribution<> rand_gen(0, npair_uniq * ns * ns-1);
+        // since uniform_int_dist can generate upper limit value, -1 correction is needed
+        for(mcid=0;mcid<nsample;mcid++){
+            sample_id_arr[0][mcid]=rand_gen(mt);
+        }
+        std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+        for (i = 0; i < nrep_sample; ++i) {
+            for(mcid=0;mcid<nsample;mcid++){
+                ik=sample_id_arr[0][mcid]/ns2;
+                int ib=sample_id_arr[0][mcid]%ns2;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                is = ib / ns;
+                js = ib % ns;
+                omega_inner[0] = eval_in[k1][is];
+                omega_inner[1] = eval_in[k2][js];
+                if(cutoff){
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon, cutoff_val);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon, cutoff_val)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon, cutoff_val);
+                    }
+                }else{
+                    if (integration->ismear == 0) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_lorentz(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_lorentz(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_lorentz(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    } else if (integration->ismear == 1) {
+                        delta_arr[ik][ns * is + js][0]
+                                = delta_gauss(omega_in - omega_inner[0] - omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] + omega_inner[1], epsilon);
+                        delta_arr[ik][ns * is + js][1]
+                                = delta_gauss(omega_in - omega_inner[0] + omega_inner[1], epsilon)
+                                - delta_gauss(omega_in + omega_inner[0] - omega_inner[1], epsilon);
+                    }
+                }
+            }
+        }
+        
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        //calculate V3 and store it into v3_map
+        allocate(calculated_v3_map, npair_uniq, ns2);
+        //set zero
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+        for (ik = 0; ik < npair_uniq; ++ik) {
+            for (int ib = 0; ib < ns2; ++ib) {
+                calculated_v3_map[ik][ib]=0;
+            }
+        }
+
+        allocate(v3_mc_arr, nrep_sample, nsample);
+        for (i = 0; i < nrep_sample; ++i) {
+            for(mcid=0;mcid<nsample;mcid++){
+                ik=sample_id_arr[i][mcid]/ns2;
+                int ib=sample_id_arr[i][mcid]%ns2;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                multi = static_cast<double>(triplet[ik].group.size());
+                is = ib / ns;
+                js = ib % ns;
+
+                arr[0] = ns * knum_minus + is_in;
+                arr[1] = ns * k1 + is;
+                arr[2] = ns * k2 + js;
+                if (delta_arr[ik][ib][0] > 0.0 || std::abs(delta_arr[ik][ib][1]) > 0.0) {
+                    //if v3 for ik and ib is not calculated
+                    if(calculated_v3_map[ik][ib]==0){
+                        calculated_v3_map[ik][ib] = std::norm(V3(arr,
+                                                kmesh_in->xk,
+                                                eval_in,
+                                                evec_in,
+                                                phase_storage_dos)) * multi;
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }else{
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }
+                }
+            }
+        }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_V3 += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+        //now, v3 for all sample points are stored in v3_mc_arr
+        //start to calculate total scattering rate
+        for (i = 0; i < ntemp; ++i) {
+            T_tmp = temp_in[i];
+            ret_tmp = 0.0;
+            var_tmp=0.0;
+#ifdef _OPENMP
+#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp,var_tmp)
+#endif
+            for(mcid=0;mcid<nsample;mcid++){
+                if(method=="WSPS"){
+                    ik=sample_id_arr[i][mcid]/ns2;
+                    int ib=sample_id_arr[i][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    //if probability function (WSPS) < 0, the value of ret_tmp should be reduced
+                    if(sign_map_mc[i][ik][ib]>0){
+                        ret_tmp += v3_mc_arr[i][mcid];
+                    }else{
+                        ret_tmp -= v3_mc_arr[i][mcid];
+                    }
+                    var_tmp += v3_mc_arr[i][mcid]*v3_mc_arr[i][mcid];
+                }else if(method=="SPS"){
+                    ik=sample_id_arr[0][mcid]/ns2;
+                    int ib=sample_id_arr[0][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+                    
+                    //since probability function(SPS) does not have linear correlation, 
+                    // v3 should be divided by probability function SPS
+                    // and WSPS is multiplied after that
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1])
+                                      /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                    if(sign_map_mc[0][ik][ib]>0){
+                        ret_tmp += v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
+                    }else{
+                        ret_tmp -= v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
+                    }
+                }else if(method=="SIMPLE"){  //simply summed up
+                    ik=sample_id_arr[0][mcid]/ns2;
+                    int ib=sample_id_arr[0][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1]);
+                    
+                    ret_tmp += v3_tmp;
+                    var_tmp += v3_tmp*v3_tmp;
+                }
+            }
+            //ret[i] = ret_tmp;
+            if(ret_tmp < 1.0e-100){
+                ret_err[i]=0;
+            }else{
+                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/(ret_tmp/nsample);
+                //ret_tmp/nsample is average
+                //sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0)) is standard error
+                //ret_err store relative error (standard_error / average of ret_tmp)
+            }
+             //calculation of relative standard error (error / value)
+             //std_ret should be allocated before this function is called
+            if(method=="WSPS"){
+                ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
+            }else if(method=="SPS"){
+                ret[i] = ret_tmp*map_mc_ik[0][npair_uniq-1]/nsample;    
+            }else if(method=="SIMPLE"){
+                ret[i] = ret_tmp*npair_uniq*ns2/nsample;
+            }
+            //renormalization by volume of integration space
+            //note map_mc_ik[i][npair_uniq-1] is total volume (last term of accumulation)
+        }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_other += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    }else{
+        std::cerr << "Monte-Carlo method " << method << " is not implemented yet" << std::endl;
+        std::exit(1);
+    }
+
+    //deallocate(v3_arr);
+    deallocate(delta_arr);
+    triplet.clear();
+
+    if(method=="SPS" || method=="WSPS"){
+        deallocate(map_mc);
+        deallocate(sign_map_mc);
+        deallocate(map_mc_ik);
+        deallocate(rand_val);
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        deallocate(sample_id_arr);
+        deallocate(calculated_v3_map);
+        deallocate(v3_mc_arr);
+    }
+
+    for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4) / static_cast<double>(nk);
+    
+    if (mympi->my_rank == 0) {  //write number of total channel and calculated sample
+        std::cout << nsample << " / " << npair_uniq * ns2 << " irr. channels. ";
+    }
 }
 
 void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
@@ -957,51 +1587,100 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
 
     for (i = 0; i < nk; ++i) kmap_identity[i] = i;
 
+    //check if tetrahedra contain irred k point or not
+    //generate map of irred kpoint or not
+    int *map_knum2ik;
+    allocate(map_knum2ik, nk);
+    for(i=0;i<nk;++i) map_knum2ik[i]=-1;
+    for(ik=0;ik<npair_uniq;ik++){
+        k1=triplet[ik].group[0].ks[0];
+        map_knum2ik[k1]=ik;
+    }
+    bool *map_tetra;
+    allocate(map_tetra, dos->tetra_nodes_dos->get_ntetra());
+    //int count=0;
+    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+        map_tetra[i]=false;
+        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+        for(int j=0;j<4;j++){
+            if(map_knum2ik[tetra[j]]<0)continue;
+            map_tetra[i]=true;  //at least one irred k is contained
+            //count++;
+            break;
+        }
+    }
+    //std::cout << "count=" << count << "/" << dos->tetra_nodes_dos->get_ntetra();
+    bool *map_contained;
+    allocate(map_contained, nk);
+    for(i=0;i<nk;++i) map_contained[i]=false;
+    for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+        if(!map_tetra[i])continue;
+        unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+        for(int j=0;j<4;++j){
+            map_contained[tetra[j]]=true;
+        }
+    }
+
 #ifdef _OPENMP
-#pragma omp parallel private(is, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
+#pragma omp parallel private(ib, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
 #endif
     {
         allocate(energy_tmp, 3, nk);
         allocate(weight_tetra, 3, nk);
+        bool **map_tetra_tmp;
+        allocate(map_tetra_tmp, 3, dos->tetra_nodes_dos->get_ntetra());
 
 #ifdef _OPENMP
 #pragma omp for
 #endif
-        for (ib = 0; ib < ns2; ++ib) {
-            is = ib / ns;
-            js = ib % ns;
-
-            for (k1 = 0; k1 < nk; ++k1) {
-
-                // Prepare two-phonon frequency for the tetrahedron method
-
-                for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
-
-                k2 = kmesh_in->get_knum(xk_tmp);
-
-                energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
-                energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
-                energy_tmp[2][k1] = -energy_tmp[1][k1];
+        for (is = 0; is < ns; ++is) {
+            //set map_tetra_tmp[i]
+            for(i=0;i<3;i++){
+                for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                    map_tetra_tmp[i][ik]=map_tetra[ik];
+                }
             }
+            for (js = 0; js < ns; ++js) {
+                ib=is*ns+js;
+                for (k1 = 0; k1 < nk; ++k1) {
+                    if(!map_contained[k1])continue;
 
-            for (i = 0; i < 3; ++i) {
-                integration->calc_weight_tetrahedron(nk, kmap_identity,
-                                                     energy_tmp[i], omega_in,
-                                                     dos->tetra_nodes_dos->get_ntetra(),
-                                                     dos->tetra_nodes_dos->get_tetras(),
-                                                     weight_tetra[i]);
-            }
+                    // Prepare two-phonon frequency for the tetrahedron method
 
-            for (ik = 0; ik < npair_uniq; ++ik) {
-                jk = triplet[ik].group[0].ks[0];
-                delta_arr[ik][ib][0] = weight_tetra[0][jk];
-                delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                    for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
+
+                    k2 = kmesh_in->get_knum(xk_tmp);
+
+                    energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
+                    energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
+                    energy_tmp[2][k1] = -energy_tmp[1][k1];
+                }
+
+                for (i = 0; i < 3; ++i) {
+                    bool flag_ascend=true;
+                    if(i==1)flag_ascend=false;
+                    integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
+                                                        energy_tmp[i], omega_in,
+                                                        dos->tetra_nodes_dos->get_ntetra(),
+                                                        dos->tetra_nodes_dos->get_tetras(),
+                                                        weight_tetra[i],flag_ascend);
+                }
+
+                for (ik = 0; ik < npair_uniq; ++ik) {
+                    jk = triplet[ik].group[0].ks[0];
+                    delta_arr[ik][ib][0] = weight_tetra[0][jk];
+                    delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                }
             }
         }
 
         deallocate(energy_tmp);
         deallocate(weight_tetra);
+        deallocate(map_tetra_tmp);
     }
+    deallocate(map_tetra);
+    deallocate(map_knum2ik);
+    deallocate(map_contained);
 
     for (ik = 0; ik < npair_uniq; ++ik) {
 
@@ -1079,6 +1758,666 @@ void AnharmonicCore::calc_damping_tetrahedron(const unsigned int ntemp,
     deallocate(kmap_identity);
 
     for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4);
+}
+
+void AnharmonicCore::calc_damping_tetrahedron_MC(const unsigned int ntemp,
+                                              const double *temp_in,
+                                              const double omega_in,
+                                              const unsigned int ik_in,
+                                              const unsigned int is_in,
+                                              const KpointMeshUniform *kmesh_in,
+                                              const double *const *eval_in,
+                                              const std::complex<double> *const *const *evec_in,
+                                              double *ret,
+                                              double *ret_err)
+{
+    // This function returns the imaginary part of phonon self-energy 
+    // for the given frequency omega_in.
+    // Tetrahedron method will be used.
+    // This version employs the crystal symmetry to reduce the computational cost
+
+    // use Monte-Carlo integration
+    // Monte-Carlo parameter is defined here (should be stored in monte-carlo class but not yet implemented)
+    int nsample=nsample_input;    //the number of sample point for MC integration
+    // reassigned after getting npair_uniq when use_sample_density is true
+    std::string method;
+    if(integration_method==1){
+        method = "SIMPLE";
+    }else if(integration_method==2){
+        method = "SPS";
+    }else if(integration_method==3){
+        method = "WSPS";
+    }else{
+        std::cerr << "Error was detected in MC_METHOD" << std::endl;
+        std::exit(1);
+    }
+    //method of MC calculation, "SIMPLE"(simple MC), 
+    //"SPS"(use important sampling based on SPS) 
+    //"WSPS"(use important sampling based on weighted SPS) 
+
+    int nrep_sample;  //the number of for-roops during sample generation
+    //since "SPS" has no temperature dependence, nrep_sample=1
+    //for "WSPS", nrep_sample=ntemp
+
+    // Monte-Carlo variables
+    std::random_device rnd; 
+    std::mt19937_64 mt(rnd());
+    double** rand_val;  //array of random values used for choosing sample point
+    //(should be sorted to efficient calculation), [id_temperature][id_sample]
+    double** v3_mc_arr; //calculated arr of V3, [id_temperature][id_sample]
+    double** calculated_v3_map;  //map of calculated v3, initialized as 0 and store calculated v3, [ik][isjs]
+    double*** map_mc;   //map for sample generation (should be ascending order for last dimention)
+    //[id_temperature][ik][isjs]
+    int*** sign_map_mc;   //sign of map_mc, [id_temperature][ik][isjs]
+    double** map_mc_ik;   //map for sample generation (should be ascending order for last dimention)
+    //[id_temperature][ik], each element contains sum_{k<=ik}(sum_{isjs}map_mc[][k][isjs])
+    int** sample_id_arr; //array of sample id, [id_temperature][id_sample]
+    double delta_tmp;    //delta part of scattering rate
+    double delta_acm;    //accumulation of delta_tmp
+    int mcid;            // < nsample
+    int ik_tmp, is_tmp;            //i
+    double rand_tmp;
+    double var_tmp;
+
+    std::chrono::system_clock::time_point  start, now;
+    if (mympi->my_rank == 0) {
+        start = std::chrono::system_clock::now();
+    }
+
+    const int nk = kmesh_in->nk;
+    const int ns = dynamical->neval;
+
+    int ik, ib;
+    const auto ns2 = ns * ns;
+
+    unsigned int i;
+    unsigned int jk;
+    unsigned int is, js;
+    unsigned int k1, k2;
+    unsigned int arr[3];
+
+    double T_tmp;
+    double n1, n2;
+    double f1, f2;
+    double multi;
+
+    double xk_tmp[3];
+    double omega_inner[2];
+
+    double ret_tmp;
+
+    unsigned int *kmap_identity;
+    double **energy_tmp;
+    double **weight_tetra;
+    double **v3_arr;
+    double ***delta_arr;
+
+    std::vector<KsListGroup> triplet;
+
+    for (i = 0; i < ntemp; ++i) ret[i] = 0.0;
+
+    kmesh_in->get_unique_triplet_k(ik_in,
+                                   symmetry->SymmList,
+                                   use_triplet_symmetry,
+                                   sym_permutation,
+                                   triplet);
+
+    const auto npair_uniq = triplet.size();
+
+    //allocate(v3_arr, npair_uniq, ns2);
+    allocate(delta_arr, npair_uniq, ns2, 2);
+
+    const auto knum = kmesh_in->kpoint_irred_all[ik_in][0].knum;
+    const auto knum_minus = kmesh_in->kindex_minus_xk[knum];
+    const auto xk = kmesh_in->xk;
+
+    allocate(kmap_identity, nk);
+
+    for (i = 0; i < nk; ++i) kmap_identity[i] = i;
+
+    if(method=="SPS" || method=="WSPS"){
+        //check if tetrahedra contain irred k point or not
+        //generate map of irred kpoint or not
+        int *map_knum2ik;
+        allocate(map_knum2ik, nk);
+        for(i=0;i<nk;++i) map_knum2ik[i]=-1;
+        for(ik=0;ik<npair_uniq;ik++){
+            k1=triplet[ik].group[0].ks[0];
+            map_knum2ik[k1]=ik;
+        }
+        bool *map_tetra;
+        allocate(map_tetra, dos->tetra_nodes_dos->get_ntetra());
+        //int count=0;
+        for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            map_tetra[i]=false;
+            unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+            for(int j=0;j<4;j++){
+                if(map_knum2ik[tetra[j]]<0)continue;
+                map_tetra[i]=true;  //at least one irred k is contained
+                //count++;
+                break;
+            }
+        }
+        //std::cout << "count=" << count << "/" << dos->tetra_nodes_dos->get_ntetra();
+        bool *map_contained;
+        allocate(map_contained, nk);
+        for(i=0;i<nk;++i) map_contained[i]=false;
+        for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            if(!map_tetra[i])continue;
+            unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[i];
+            for(int j=0;j<4;++j){
+                map_contained[tetra[j]]=true;
+            }
+        }
+
+    #ifdef _OPENMP
+    #pragma omp parallel private(ib, js, k1, k2, xk_tmp, energy_tmp, i, weight_tetra, ik, jk, arr)
+    #endif
+        {
+            allocate(energy_tmp, 3, nk);
+            allocate(weight_tetra, 3, nk);
+            bool **map_tetra_tmp;
+            allocate(map_tetra_tmp, 3, dos->tetra_nodes_dos->get_ntetra());
+
+    #ifdef _OPENMP
+    #pragma omp for
+    #endif
+            for (is = 0; is < ns; ++is) {
+            //set map_tetra_tmp[i]
+                for(i=0;i<3;i++){
+                    for(ik=0;ik<dos->tetra_nodes_dos->get_ntetra();ik++){
+                        map_tetra_tmp[i][ik]=map_tetra[ik];
+                    }
+                }
+                for (js = 0; js < ns; ++js) {
+                    ib=is*ns+js;
+
+                    for (k1 = 0; k1 < nk; ++k1) {
+                        if(!map_contained[k1])continue;
+
+                        // Prepare two-phonon frequency for the tetrahedron method
+
+                        for (i = 0; i < 3; ++i) xk_tmp[i] = xk[knum][i] - xk[k1][i];
+
+                        k2 = kmesh_in->get_knum(xk_tmp);
+
+                        energy_tmp[0][k1] = eval_in[k1][is] + eval_in[k2][js];
+                        energy_tmp[1][k1] = eval_in[k1][is] - eval_in[k2][js];
+                        energy_tmp[2][k1] = -energy_tmp[1][k1];
+                    }
+
+                    for (i = 0; i < 3; ++i) {
+                        bool flag_ascend=true;
+                        if(i==1)flag_ascend=false;
+                        integration->calc_weight_tetrahedron_irr(nk, kmap_identity, map_tetra_tmp[i],
+                                                            energy_tmp[i], omega_in,
+                                                            dos->tetra_nodes_dos->get_ntetra(),
+                                                            dos->tetra_nodes_dos->get_tetras(),
+                                                            weight_tetra[i],flag_ascend);
+                    }
+
+                    for (ik = 0; ik < npair_uniq; ++ik) {
+                        jk = triplet[ik].group[0].ks[0];
+                        delta_arr[ik][ib][0] = weight_tetra[0][jk];
+                        delta_arr[ik][ib][1] = weight_tetra[1][jk] - weight_tetra[2][jk];
+                    }
+                }
+            }
+
+            deallocate(energy_tmp);
+            deallocate(weight_tetra);
+            deallocate(map_tetra_tmp);
+        }
+
+        deallocate(map_tetra);
+        deallocate(map_knum2ik);
+        deallocate(map_contained);
+    }
+    if (mympi->my_rank == 0) {
+        now = std::chrono::system_clock::now();
+        elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+        start = std::chrono::system_clock::now();
+    }
+
+    //map_mc generation
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        //reassign nsample
+        if(use_sample_density){
+            nsample=ns2*npair_uniq*sample_density;
+        }
+        //assign nrep_sample
+        //if mode is SPS< generated samples is not dependent on temperature
+        if(method=="WSPS"){
+            nrep_sample=ntemp;
+        }else if(method=="SPS"){
+            nrep_sample=1;
+        }else if(method=="SIMPLE"){
+            nrep_sample=1;
+        }
+    }
+    if(method=="SPS" || method=="WSPS"){
+        allocate(map_mc, nrep_sample, npair_uniq, ns * ns);
+        allocate(sign_map_mc, nrep_sample, npair_uniq, ns * ns);
+        allocate(map_mc_ik, nrep_sample, npair_uniq);
+        for (i = 0; i < nrep_sample; ++i) {
+            T_tmp = temp_in[i];
+#ifdef _OPENMP
+#pragma omp parallel for private(k1, k2, is, js, omega_inner, n1, n2, f1, f2, delta_acm, delta_tmp)
+#endif
+            for (ik = 0; ik < npair_uniq; ++ik) {
+                delta_acm=0;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                for (is = 0; is < ns; ++is) {
+                    omega_inner[0] = eval_in[k1][is];
+                    for (js = 0; js < ns; ++js) {
+                        // get n1 and n2
+                        // mode SPS does not need n1 and n2
+                        if(method=="SPS"){
+                            n1=1;
+                            n2=1;
+                        }else if(method=="WSPS"){ //mode "WSPS" needs n1 and n2
+                            omega_inner[1] = eval_in[k2][js];
+                            if (thermodynamics->classical) {
+                                f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                                f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                                n1 = f1 + f2;
+                                n2 = f1 - f2;
+                            } else {
+                                f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                                f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                                n1 = f1 + f2 + 1.0;
+                                n2 = f1 - f2;
+                            }
+                        }
+                        delta_tmp = (n1 * delta_arr[ik][ns * is + js][0]
+                                  - n2 * delta_arr[ik][ns * is + js][1]);
+                        //get absolute value of delta_tmp and store original sign
+                        if(delta_tmp<0){
+                            delta_tmp=-delta_tmp;
+                            sign_map_mc[i][ik][ns * is + js]=-1;
+                        }else{
+                            sign_map_mc[i][ik][ns * is + js]=1;
+                        }
+                        //accumulate delta element for each ik
+                        map_mc[i][ik][ns * is + js]=delta_acm+delta_tmp;
+                        delta_acm=delta_acm+delta_tmp;
+                    }
+                }
+                //get total accumulation of delta and store into map_mc_ik
+                map_mc_ik[i][ik]=delta_acm;
+            }
+        }
+        //finished temperature roop
+        //accumulate map_mc_ik
+        //start from 1 because map_mc_ik[i][0] is OK
+        for (i = 0; i < nrep_sample; ++i) {
+            for (ik = 1; ik < npair_uniq; ++ik) {
+                map_mc_ik[i][ik]=map_mc_ik[i][ik-1]+map_mc_ik[i][ik];
+            }
+        }
+
+        //get array of random value in range of (0 map_mc_ik[i][npair_uniq-1])
+        //map_mc_ik[i][npair_uniq-1] is total value of accumulation
+        //rand_val should be sorted
+        allocate(rand_val, nrep_sample, nsample);
+        std::uniform_real_distribution<> rand_gen(0, 1);
+        for (i = 0; i < nrep_sample; ++i) {
+            double rand_max=map_mc_ik[i][npair_uniq-1];  //upper limit of rand_val
+            for(mcid=0;mcid<nsample;mcid++){
+                rand_val[i][mcid]=rand_gen(mt)*rand_max;
+            }
+            std::sort(rand_val[i],rand_val[i]+nsample);
+        }
+
+        //search sample point
+        allocate(sample_id_arr, nrep_sample, nsample);
+#ifdef _OPENMP
+#pragma omp parallel for private(delta_acm, delta_tmp, mcid, T_tmp, ik_tmp, is_tmp, rand_tmp)
+#endif
+        for (i = 0; i < nrep_sample; ++i) {
+            T_tmp = temp_in[i];
+            ik_tmp=0;
+            is_tmp=0;
+            for(mcid=0;mcid<nsample;mcid++){
+                //find position of rand_val[i][mcid] from map_mc
+                //at first, find position of rand_val[i][mcid] from map_mc_ik
+                rand_tmp=rand_val[i][mcid];
+                while(1){
+                    if(map_mc_ik[i][ik_tmp] < rand_tmp){
+                        ik_tmp++;
+                        is_tmp=0;  //since ik is updated, is_tmp should restart from 0
+                        if(ik_tmp>=npair_uniq){
+                            std::cerr << "rand_val[" << mcid << "] is too large for map_mc_ik" << std::endl;
+                            std::exit(1);
+                        }
+                    }else{
+                        break;
+                    }
+                }
+                //check rand_val
+                if(mcid>0){
+                    if(rand_tmp<rand_val[i][mcid-1]){
+                        std::cerr << "rand_val[" << mcid << "] is not ascending order" << std::endl;
+                            std::exit(1);
+                    }
+                }
+                //find position of rand_tmp from map_mc[i][ik_tmp]
+                //note map_mc is accumulation only map_mc[i][ik_each]
+                //it requires this reduction:
+                if(ik_tmp != 0){
+                    rand_tmp=rand_tmp-map_mc_ik[i][ik_tmp-1];
+                }
+                //note map_mc_ik[i][-1]=0 due to it's definition
+
+                while(1){
+                    if(map_mc[i][ik_tmp][is_tmp] < rand_tmp){
+                        is_tmp++;
+                        if(is_tmp>=ns2){
+                            std::cerr << "rand_val[" << mcid << "] is too large for map_mc" << std::endl;
+                            std::exit(1);
+                        }
+                    }else{
+                        break;
+                    }
+                }
+
+                //now, ik_tmp and is_tmp are position of rand_val[i][mcid]
+                //store them into sample_id_arr
+                sample_id_arr[i][mcid]=ik_tmp*ns2+is_tmp;
+            }
+            //for-roop of mc_sample is finished
+        }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    // finish sample generation using SPS
+    }else if(method == "SIMPLE"){
+        allocate(sample_id_arr, nrep_sample, nsample);
+        std::uniform_int_distribution<> rand_gen(0, npair_uniq * ns * ns-1);
+        // since uniform_int_dist can generate upper limit value, -1 correction is needed
+        for(mcid=0;mcid<nsample;mcid++){
+            sample_id_arr[0][mcid]=rand_gen(mt);
+        }
+        std::sort(sample_id_arr[0],sample_id_arr[0]+nsample);
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_sample += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+
+        //generate map from k to tetra
+        int **map_tetra;
+        int *map_tetra_length;
+        allocate(map_tetra, nk, 40);
+        allocate(map_tetra_length, nk);
+        for(i=0;i<nk;i++) map_tetra_length[i]=0;
+        for(i=0;i<dos->tetra_nodes_dos->get_ntetra();++i){
+            int k1_pre_arr[3];
+            for(int j=0;j<4;j++){
+                int k1_tmp=dos->tetra_nodes_dos->get_tetras()[i][j];
+                //remove multiple count
+                bool is_found=false;
+                for(int k=0;k<j;k++){
+                    if(k1_pre_arr[k]==k1_tmp)is_found=true; //if k1_tmp is already stored i_tetra, skip store
+                }
+                k1_pre_arr[j]=k1_tmp;
+                if(is_found)continue;
+                map_tetra[k1_tmp][map_tetra_length[k1_tmp]]=i;
+                map_tetra_length[k1_tmp]+=1;
+                if(map_tetra_length[k1_tmp]>40){
+                    std::cerr << "two many tetras" << std::endl;
+                    std::exit(1);
+                }
+            }
+        }
+        for(mcid=0;mcid<nsample;mcid++){
+            ik=sample_id_arr[0][mcid]/ns2;
+            int ib=sample_id_arr[0][mcid]%ns2;
+            k1 = triplet[ik].group[0].ks[0];
+            k2 = triplet[ik].group[0].ks[1];
+            is = ib / ns;
+            js = ib % ns;
+            delta_arr[ik][ib][0]=0;
+            delta_arr[ik][ib][1]=0;
+            double **energy_tmp;
+            double **weight_tetra;
+            allocate(energy_tmp, 3, 4);
+            allocate(weight_tetra, 3, 4);
+            //roop about related tetrahedron
+            for(i=0;i<map_tetra_length[k1];++i){
+                //do tetrahedron
+                unsigned int *tetra=dos->tetra_nodes_dos->get_tetras()[map_tetra[k1][i]];
+                for(int j=0;j<4;j++){
+                    int k1_tmp=tetra[j];
+                    for (int k = 0; k < 3; ++k) xk_tmp[k] = xk[knum][k] - xk[k1_tmp][k];
+
+                    int k2_tmp = kmesh_in->get_knum(xk_tmp);
+
+                    energy_tmp[0][j] = eval_in[k1_tmp][is] + eval_in[k2_tmp][js];
+                    energy_tmp[1][j] = eval_in[k1_tmp][is] - eval_in[k2_tmp][js];
+                    energy_tmp[2][j] = -energy_tmp[1][j];
+                }
+                for(int j=0;j<3;++j){
+                    integration->calc_weight_tetrahedron_each(energy_tmp[j],omega_in,
+                                                                dos->tetra_nodes_dos->get_ntetra(),
+                                                                weight_tetra[j]);
+                }
+                for(int j=0;j<4;j++){
+                    if(tetra[j]==k1){
+                        delta_arr[ik][ib][0] += weight_tetra[0][j];
+                        delta_arr[ik][ib][1] += weight_tetra[1][j] - weight_tetra[2][j];
+                    }
+                }
+            }
+            deallocate(energy_tmp);
+            deallocate(weight_tetra);
+        }
+        deallocate(map_tetra);
+        deallocate(map_tetra_length);
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_SPS += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        //calculate V3 and store it into v3_map
+        allocate(calculated_v3_map, npair_uniq, ns2);
+        //set zero
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+        for (ik = 0; ik < npair_uniq; ++ik) {
+            for (int ib = 0; ib < ns2; ++ib) {
+                calculated_v3_map[ik][ib]=0;
+            }
+        }
+
+        allocate(v3_mc_arr, nrep_sample, nsample);
+        for (i = 0; i < nrep_sample; ++i) {
+            for(mcid=0;mcid<nsample;mcid++){
+                ik=sample_id_arr[i][mcid]/ns2;
+                int ib=sample_id_arr[i][mcid]%ns2;
+                k1 = triplet[ik].group[0].ks[0];
+                k2 = triplet[ik].group[0].ks[1];
+                multi = static_cast<double>(triplet[ik].group.size());
+                is = ib / ns;
+                js = ib % ns;
+
+                arr[0] = ns * knum_minus + is_in;
+                arr[1] = ns * k1 + is;
+                arr[2] = ns * k2 + js;
+                if (delta_arr[ik][ib][0] > 0.0 || std::abs(delta_arr[ik][ib][1]) > 0.0) {
+                //if v3 for ik and ib is not calculated
+                    if(calculated_v3_map[ik][ib]==0){
+                        calculated_v3_map[ik][ib] = std::norm(V3(arr,
+                                                kmesh_in->xk,
+                                                eval_in,
+                                                evec_in,
+                                                phase_storage_dos)) * multi;
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }else{
+                        v3_mc_arr[i][mcid]=calculated_v3_map[ik][ib];
+                    }
+                }
+            }
+        }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_V3 += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+        //now, v3 for all sample points are stored in v3_mc_arr
+        //start to calculate total scattering rate
+        for (i = 0; i < ntemp; ++i) {
+            T_tmp = temp_in[i];
+            ret_tmp = 0.0;
+            var_tmp=0.0;
+#ifdef _OPENMP
+#pragma omp parallel for private(ik, k1, k2, is, js, omega_inner, n1, n2, f1, f2), reduction(+:ret_tmp,var_tmp)
+#endif
+            for(mcid=0;mcid<nsample;mcid++){
+                if(method=="WSPS"){
+                    ik=sample_id_arr[i][mcid]/ns2;
+                    int ib=sample_id_arr[i][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    //if probability function (WSPS) < 0, the value of ret_tmp should be reduced
+                    if(sign_map_mc[i][ik][ib]>0){
+                        ret_tmp += v3_mc_arr[i][mcid];
+                    }else{
+                        ret_tmp -= v3_mc_arr[i][mcid];
+                    }
+                    var_tmp += v3_mc_arr[i][mcid]*v3_mc_arr[i][mcid];
+                }else if(method=="SPS"){
+                    ik=sample_id_arr[0][mcid]/ns2;
+                    int ib=sample_id_arr[0][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+                    
+                    //since probability function(SPS) does not have linear correlation, 
+                    // v3 should be divided by probability function SPS
+                    // and WSPS is multiplied after that
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1])
+                                      /(delta_arr[ik][ns * is + js][0] - delta_arr[ik][ns * is + js][1]);
+                    if(sign_map_mc[0][ik][ib]>0){
+                        ret_tmp += v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
+                    }else{
+                        ret_tmp -= v3_tmp;
+                        var_tmp += v3_tmp*v3_tmp;
+                    }
+                }else if(method=="SIMPLE"){  //simply summed up
+                    ik=sample_id_arr[0][mcid]/ns2;
+                    int ib=sample_id_arr[0][mcid]%ns2;
+                    k1 = triplet[ik].group[0].ks[0];
+                    k2 = triplet[ik].group[0].ks[1];
+                    is = ib / ns;
+                    js = ib % ns;
+                    omega_inner[0] = eval_in[k1][is];
+                    omega_inner[1] = eval_in[k2][js];
+                    if (thermodynamics->classical) {
+                        f1 = thermodynamics->fC(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fC(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2;
+                        n2 = f1 - f2;
+                    } else {
+                        f1 = thermodynamics->fB(omega_inner[0], T_tmp);
+                        f2 = thermodynamics->fB(omega_inner[1], T_tmp);
+
+                        n1 = f1 + f2 + 1.0;
+                        n2 = f1 - f2;
+                    }
+
+                    double v3_tmp = v3_mc_arr[0][mcid]
+                                    * (n1 * delta_arr[ik][ns * is + js][0]
+                                      - n2 * delta_arr[ik][ns * is + js][1]);
+                    
+                    ret_tmp += v3_tmp;
+                    var_tmp += v3_tmp*v3_tmp;
+                }
+            }
+            //ret[i] = ret_tmp;
+            if(ret_tmp < 1.0e-100){
+                ret_err[i]=0;
+            }else{
+                ret_err[i]=std::sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0))/(ret_tmp/nsample);
+                //ret_tmp/nsample is average
+                //sqrt((var_tmp/nsample-ret_tmp/nsample*ret_tmp/nsample)/(nsample-1.0)) is standard error
+                //ret_err store relative error (standard_error / average of ret_tmp)
+            }
+             //calculation of relative standard error (error / value)
+             //std_ret should be allocated before this function is called
+            if(method=="WSPS"){
+                ret[i] = ret_tmp*map_mc_ik[i][npair_uniq-1]/nsample;  
+            }else if(method=="SPS"){
+                ret[i] = ret_tmp*map_mc_ik[0][npair_uniq-1]/nsample;  
+            }else if(method=="SIMPLE"){
+                ret[i] = ret_tmp*npair_uniq*ns2/nsample;
+            }
+            //renormalization by volume of integration space
+            //note map_mc_ik[i][npair_uniq-1] is total volume (last term of accumulation)
+        }
+        if (mympi->my_rank == 0) {
+            now = std::chrono::system_clock::now();
+            elapsed_other += std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
+            start = std::chrono::system_clock::now();
+        }
+    }else{
+        std::cerr << "Monte-Carlo method " << method << " is not implemented yet" << std::endl;
+        std::exit(1);
+    }
+
+    //deallocate(v3_arr);
+    deallocate(delta_arr);
+    triplet.clear();
+
+    if(method=="SPS" || method=="WSPS"){
+        deallocate(map_mc);
+        deallocate(sign_map_mc);
+        deallocate(map_mc_ik);
+        deallocate(rand_val);
+    }
+    if(method=="SPS" || method=="WSPS" || method=="SIMPLE"){
+        deallocate(sample_id_arr);
+        deallocate(calculated_v3_map);
+        deallocate(v3_mc_arr);
+    }
+
+    deallocate(kmap_identity);
+
+    for (i = 0; i < ntemp; ++i) ret[i] *= pi * std::pow(0.5, 4);
+
+    if (mympi->my_rank == 0) {  //write number of total channel and calculated sample
+        std::cout << nsample << " / " << npair_uniq * ns2 << " irr. channels. ";
+    }
 }
 
 void AnharmonicCore::setup_cubic()
