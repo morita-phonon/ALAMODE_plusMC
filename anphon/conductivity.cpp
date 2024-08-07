@@ -329,7 +329,7 @@ void Conductivity::generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, cons
                     for (unsigned int j = 0; j < 3; ++j) {
                         for (unsigned int k = 0; k < 3; ++k) {
                             if(vv_dim == "diagonal" || vv_dim == "diagonal_sum"){
-                                if(j != k)continue;
+                                //if(j != k)continue;
                             }
                             auto vv_tmp = 0.0;
 
@@ -359,6 +359,14 @@ void Conductivity::generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, cons
 
                     if(vv_dim == "full"){
                     }else if(vv_dim == "diagonal"){
+                        //xy=xz = xx, yx=yz = yy, zx=zy = zz
+                        for(int j=0;j<3;j++){
+                            for(int k=0;k<3;k++){
+                                if(j==k)continue;
+                                weighting_factor_mc[i][j*3+k][ik * ns + is] = weighting_factor_mc[i][j*3+j][ik * ns + is];
+                                weighting_factor_map[i][j*3+k][ik * ns + is] = weighting_factor_map[i][j*3+j][ik * ns + is];
+                            }
+                        }
                     }else if(vv_dim == "diagonal_sum"){
                         weighting_factor_mc[i][0][ik * ns + is]=weighting_factor_mc[i][0][ik * ns + is]
                                                                     +weighting_factor_mc[i][4][ik * ns + is]
@@ -366,6 +374,10 @@ void Conductivity::generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, cons
                         weighting_factor_map[i][0][ik * ns + is]=weighting_factor_map[i][0][ik * ns + is]
                                                                     +weighting_factor_map[i][4][ik * ns + is]
                                                                     +weighting_factor_map[i][8][ik * ns + is];
+                        for(int j=1;j<9;j++){
+                            weighting_factor_mc[i][j][ik * ns + is]=weighting_factor_mc[i][0][ik * ns + is];
+                            weighting_factor_map[i][j][ik * ns + is]=weighting_factor_map[i][0][ik * ns + is];
+                        }
                     }
                 }
             }
