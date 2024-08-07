@@ -57,10 +57,10 @@ void Conductivity::set_default_variables()
     calc_coherent = 0;
     file_coherent_elems = "";
 
-    calc_kappa_mc=0;
-    nsample_kappa_density=0.1;
-    coef_b=1.5;
-    vv_dim = "sum";
+    //calc_kappa_mc=0;
+    //nsample_kappa_density=0.1;
+    //coef_b=1.5;
+    //vv_dim = "sum";  //these value were initially set in parsephon.cpp
     std::random_device rnd;
     seed=rnd();
 }
@@ -287,11 +287,14 @@ void Conductivity::prepare_restart()
         }
         deallocate(arr_done);
     }
-    vks_done.clear();
+    //vks_done.clear();
 }
 
 void PHON_NS::Conductivity::setup_kappa_mc()
 {
+    //broadcast vars
+    //MPI_Bcast(&calc_kappa_mc, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    //MPI_Bcast(&nsample_kappa_density, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     //setup nsample_kappa
     generate_nsample_kappa();
     generate_kappa_mc_map(dos->kmesh_dos, dos->dymat_dos->get_eigenvalues());
@@ -301,12 +304,19 @@ void PHON_NS::Conductivity::setup_kappa_mc()
     //resize map_sample_to_mode
     map_sample_to_mode.assign(ntemp,std::vector<std::vector<unsigned int>>(9));
     generate_kappa_mc_sample(nshift_tmp,nsample_kappa);
+    setup_vks_for_mc();
 }
 
 void Conductivity::generate_nsample_kappa(){
     const auto nk_irred = dos->kmesh_dos->nk_irred;
-    for (int i = 0; i < ntemp; ++i) {
-        nsample_kappa[i]=static_cast<unsigned int>(nk_irred*ns*nsample_kappa_density);
+    if(nsample_kappa_density <= 0 || nsample_kappa_density > 1){
+        for (int i = 0; i < ntemp; ++i) {
+            nsample_kappa[i]=static_cast<unsigned int>(nsample_kappa_ini);
+        }
+    }else{
+        for (int i = 0; i < ntemp; ++i) {
+            nsample_kappa[i]=static_cast<unsigned int>(nk_irred*ns*nsample_kappa_density);
+        }
     }
 }
 
@@ -424,6 +434,24 @@ void PHON_NS::Conductivity::generate_kappa_mc_sample(const unsigned int *nshift,
                         }
                     }
                 }
+                //copy to non-diagonal sample set
+                if(vv_dim == "diagonal"){
+                    for(int j=0;j<3;j++){
+                        for(int k=0;k<3;k++){
+                            if(j == k)continue;
+                            if(map_sample_to_mode[i][j*3+k].size() != nshift[i]){
+                                std::cerr << "Error in generating map_sample_to_mode" << std::endl;
+                                std::exit(1);
+                            }
+                            if(map_sample_to_mode[i][j*3+k].size() < nshift[i]+nsample[i]){
+                                map_sample_to_mode[i][j*3+k].reserve(nshift[i]+nsample[i]);
+                            }
+                            for(unsigned int mcid=0;mcid<nsample[i];mcid++){
+                                map_sample_to_mode[i][j*3+k].push_back(map_sample_to_mode[i][j*3+j][nshift[i]+mcid]);
+                            }
+                        }
+                    }
+                }
             }else{
                 if(map_sample_to_mode[i][0].size() < nshift[i]+nsample[i]){
                     map_sample_to_mode[i][0].reserve(nshift[i]+nsample[i]);
@@ -450,9 +478,56 @@ void PHON_NS::Conductivity::generate_kappa_mc_sample(const unsigned int *nshift,
                     }
                     map_sample_to_mode[i][0].push_back(tmp);
                 }
+                //copy to other sample set
+                for(int j=1;j<9;j++){
+                    if(map_sample_to_mode[i][j].size() != nshift[i]){
+                        std::cerr << "Error in generating map_sample_to_mode" << std::endl;
+                        std::exit(1);
+                    }
+                    if(map_sample_to_mode[i][j].size() < nshift[i]+nsample[i]){
+                        map_sample_to_mode[i][j].reserve(nshift[i]+nsample[i]);
+                    }
+                    for(unsigned int mcid=0;mcid<nsample[i];mcid++){
+                        map_sample_to_mode[i][j].push_back(map_sample_to_mode[i][0][nshift[i]+mcid]);
+                    }
+                }
+
             }
         }
     }
+}
+
+void PHON_NS::Conductivity::setup_vks_for_mc()
+{
+    const auto nk_irred = dos->kmesh_dos->nk_irred;
+    allocate(gamma_calculated,nk_irred*ns);
+    int* gamma_calculated_tmp;
+    allocate(gamma_calculated_tmp,nk_irred*ns);
+    for(int iks=0;iks<nk_irred*ns;iks++){
+        gamma_calculated[iks]=0;
+        gamma_calculated_tmp[iks]=0;
+    }
+    
+    //setup calculated map
+    for(int i=0;vks_done.size();i++){
+        auto iks_tmp = vks_done[i];
+        gamma_calculated[iks_tmp]=1;
+        gamma_calculated_tmp[iks_tmp]=1;
+    }
+
+    //reset vks_job
+    vks_job.clear();
+    for(int i=0;i<ntemp;i++){
+        for(int j=0;j<9;j++){
+            for(int mcid=0;mcid<nsample_kappa[i];mcid++){
+                auto iks_tmp=map_sample_to_mode[i][j][mcid];
+                if(gamma_calculated_tmp[iks_tmp]>0)continue;
+                gamma_calculated_tmp[iks_tmp]=1;
+                vks_job.insert(iks_tmp);
+            }
+        }
+    }
+    deallocate(gamma_calculated_tmp);
 }
 
 void Conductivity::calc_anharmonic_imagself()
@@ -468,6 +543,31 @@ void Conductivity::calc_anharmonic_imagself()
     anharmonic_core->elapsed_sample=0;
     anharmonic_core->elapsed_V3=0;
     anharmonic_core->elapsed_other=0;
+
+    //setup kappa_mc
+    std::vector<int> vks_vec;
+    if(calc_kappa_mc>0){
+        int nks_g_tmp;
+        if (mympi->my_rank == 0) {
+            setup_kappa_mc();
+            vks_vec.reserve(vks_job.size());
+            for (const auto &it: vks_job) {
+                vks_vec.push_back(it);
+            }
+            nks_g_tmp=vks_vec.size();
+        }
+        MPI_Bcast(&nks_g_tmp, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if (mympi->my_rank != 0) {
+            vks_vec.resize(nks_g_tmp);
+        }
+        MPI_Bcast(&vks_vec[0], nks_g_tmp, MPI_INT, 0, MPI_COMM_WORLD);
+        if (mympi->my_rank != 0) {
+            vks_job.clear();
+            for(i=0;i<nks_g_tmp;i++){
+                vks_job.insert(vks_vec[i]);
+            }
+        }
+    }
 
     // Distribute (k,s) to individual MPI threads
 
@@ -601,13 +701,42 @@ void Conductivity::calc_anharmonic_imagself()
         if (mympi->my_rank == 0) {
             start = std::chrono::system_clock::now();
         }
-        MPI_Gather(&damping3_loc[0], ntemp, MPI_DOUBLE,
-                   damping3[nshift_restart + i * mympi->nprocs], ntemp,
-                   MPI_DOUBLE, 0, MPI_COMM_WORLD);
-        
-        MPI_Gather(&std_ret[0], ntemp, MPI_DOUBLE,
-                   rel_err[nshift_restart + i * mympi->nprocs], ntemp,
-                   MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+        if(calc_kappa_mc>0){
+            double *damping3_tmp;
+            double *rel_err_tmp;
+            if (mympi->my_rank == 0) {
+                allocate(damping3_tmp, ntemp * mympi->nprocs);
+                allocate(rel_err_tmp, ntemp * mympi->nprocs);
+            }
+            MPI_Gather(&damping3_loc[0], ntemp, MPI_DOUBLE,
+                    &damping3_tmp[0], ntemp,
+                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            
+            MPI_Gather(&std_ret[0], ntemp, MPI_DOUBLE,
+                    &rel_err_tmp[0], ntemp,
+                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+            if (mympi->my_rank == 0) {
+                for(int id=0;id<mympi->nprocs;id++){
+                    if(i*mympi->nprocs+id > vks_job.size())break;
+                    auto iks_mc=vks_vec[i*mympi->nprocs+id];
+                    gamma_calculated[iks_mc]=1;
+                    for(int id_temp=0;id_temp<ntemp;id_temp++){
+                        damping3[iks_mc][id_temp]=damping3_tmp[id*ntemp+id_temp];
+                        rel_err[iks_mc][id_temp]=rel_err_tmp[id*ntemp+id_temp];
+                    }
+                }
+            }
+        }else{
+            MPI_Gather(&damping3_loc[0], ntemp, MPI_DOUBLE,
+                    damping3[nshift_restart + i * mympi->nprocs], ntemp,
+                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            
+            MPI_Gather(&std_ret[0], ntemp, MPI_DOUBLE,
+                    rel_err[nshift_restart + i * mympi->nprocs], ntemp,
+                    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        }
 
         if (mympi->my_rank == 0) {
             now = std::chrono::system_clock::now();
@@ -618,7 +747,11 @@ void Conductivity::calc_anharmonic_imagself()
         if (mympi->my_rank == 0) {
             //if MC_integration is active, 
             //note that some message is already shown in function calc_damping_smearing_MC
-            write_result_gamma(i, nshift_restart, vel, damping3);
+            if(calc_kappa_mc>0){
+                //write_result_gamma_each(iks_mc, vel, damping3);
+            }else{
+                write_result_gamma(i, nshift_restart, vel, damping3);
+            }
             if(anharmonic_core->integration_method<=0){
                 std::cout << " MODE " << std::setw(5) << i + 1 << " done." << std::endl << std::flush;
             }else{

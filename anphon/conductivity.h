@@ -29,12 +29,6 @@ public:
 
     void setup_kappa_mc();
 
-    void generate_nsample_kappa();
-
-    void generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, const double *const *eval_in);
-
-    void generate_kappa_mc_sample(const unsigned int *nshift, const unsigned int *nsample);
-
     void calc_anharmonic_imagself();
 
     void compute_kappa();
@@ -55,13 +49,13 @@ public:
     unsigned int seed;
     int calc_kappa_mc;  //0: full mode, 1: MC
     double nsample_kappa_density;
+    int nsample_kappa_ini;
     unsigned int *nsample_kappa;
     double coef_b;
     std::vector<std::vector<std::vector<unsigned int>>> map_sample_to_mode;  //[temperature][dim1*3+dim2][sample_id]
-    unsigned int **gamma_calculated;
+    unsigned int *gamma_calculated;
     double ***weighting_factor_mc;  //[temperature][dim1*3+dim2][ik*ns+is]
     double ***weighting_factor_map;  //[temperature][dim1*3+dim2][ik*ns+is], accumulation of weighting_factor_mc
-    double error_kappa_mc;
     std::string vv_dim;  //"full","diagonal","diagonal_sum","xx"-"zz"
 
 private:
@@ -86,6 +80,14 @@ private:
                             unsigned int,
                             double ***,
                             double **) const;
+                            
+    void generate_nsample_kappa();
+
+    void generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, const double *const *eval_in);
+
+    void generate_kappa_mc_sample(const unsigned int *nshift, const unsigned int *nsample);
+    
+    void setup_vks_for_mc();
 
     void average_self_energy_at_degenerate_point(const int n,
                                                  const int m,
