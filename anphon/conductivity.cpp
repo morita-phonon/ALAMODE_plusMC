@@ -56,6 +56,13 @@ void Conductivity::set_default_variables()
     velmat = nullptr;
     calc_coherent = 0;
     file_coherent_elems = "";
+
+    calc_kappa_mc=0;
+    nsample_kappa_density=0.1;
+    coef_b=1.5;
+    vv_dim = "sum";
+    std::random_device rnd;
+    seed=rnd();
 }
 
 void Conductivity::deallocate_variables()
@@ -281,6 +288,159 @@ void Conductivity::prepare_restart()
         deallocate(arr_done);
     }
     vks_done.clear();
+}
+
+void PHON_NS::Conductivity::setup_kappa_mc()
+{
+    //setup nsample_kappa
+    generate_nsample_kappa();
+    generate_kappa_mc_map(dos->kmesh_dos, dos->dymat_dos->get_eigenvalues());
+    unsigned int *nshift_tmp;
+    allocate(nshift_tmp,ntemp);
+    for(int id=0;id<ntemp;id++)nshift_tmp[id]=0;
+    //resize map_sample_to_mode
+    map_sample_to_mode.assign(ntemp,std::vector<std::vector<unsigned int>>(9));
+    generate_kappa_mc_sample(nshift_tmp,nsample_kappa);
+}
+
+void Conductivity::generate_nsample_kappa(){
+    const auto nk_irred = dos->kmesh_dos->nk_irred;
+    for (int i = 0; i < ntemp; ++i) {
+        nsample_kappa[i]=static_cast<unsigned int>(nk_irred*ns*nsample_kappa_density);
+    }
+}
+
+void Conductivity::generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, const double *const *eval_in){
+    const auto nk_irred = kmesh_in->nk_irred;
+    allocate(weighting_factor_mc,ntemp,9,nk_irred*ns);
+    allocate(weighting_factor_map,ntemp,9,nk_irred*ns);
+
+    //generate map
+    for (int i = 0; i < ntemp; ++i) {
+
+        if (temperature[i] < eps) {
+        } else {
+            for (int is = 0; is < ns; ++is) {
+                for (int ik = 0; ik < nk_irred; ++ik) {
+                    const auto knum = kmesh_in->kpoint_irred_all[ik][0].knum;
+                    const auto omega = eval_in[knum][is];
+                    const auto nk_equiv = kmesh_in->kpoint_irred_all[ik].size();
+                    const double omega_b=pow(omega,coef_b);
+                    for (unsigned int j = 0; j < 3; ++j) {
+                        for (unsigned int k = 0; k < 3; ++k) {
+                            if(vv_dim == "diagonal" || vv_dim == "diagonal_sum"){
+                                if(j != k)continue;
+                            }
+                            auto vv_tmp = 0.0;
+
+                            // Accumulate group velocity (diad product) for the reducible k points
+                            for (auto ieq = 0; ieq < nk_equiv; ++ieq) {
+                                const auto ktmp = kmesh_in->kpoint_irred_all[ik][ieq].knum;
+                                vv_tmp += vel[ktmp][is][j] * vel[ktmp][is][k];
+                            }
+
+                            if (thermodynamics->classical) {
+                                weighting_factor_mc[i][3 * j + k][ik * ns + is]
+                                        = thermodynamics->Cv_classical(omega, temperature[i])
+                                          * vv_tmp * omega_b;
+                            } else {
+                                weighting_factor_mc[i][3 * j + k][ik * ns + is]
+                                        = thermodynamics->Cv(omega, temperature[i])
+                                          * vv_tmp * omega_b;
+                            }
+                            if(is==0 && ik==0){
+                                weighting_factor_map[i][3 * j + k][ik * ns + is]=weighting_factor_mc[i][3 * j + k][ik * ns + is];
+                            }else{
+                                weighting_factor_map[i][3 * j + k][ik * ns + is]=weighting_factor_mc[i][3 * j + k][ik * ns + is-1]
+                                                                                    +weighting_factor_mc[i][3 * j + k][ik * ns + is];
+                            }
+                        }
+                    }
+
+                    if(vv_dim == "full"){
+                    }else if(vv_dim == "diagonal"){
+                    }else if(vv_dim == "diagonal_sum"){
+                        weighting_factor_mc[i][0][ik * ns + is]=weighting_factor_mc[i][0][ik * ns + is]
+                                                                    +weighting_factor_mc[i][4][ik * ns + is]
+                                                                    +weighting_factor_mc[i][8][ik * ns + is];
+                        weighting_factor_map[i][0][ik * ns + is]=weighting_factor_map[i][0][ik * ns + is]
+                                                                    +weighting_factor_map[i][4][ik * ns + is]
+                                                                    +weighting_factor_map[i][8][ik * ns + is];
+                    }
+                }
+            }
+        }
+    }
+}
+
+void PHON_NS::Conductivity::generate_kappa_mc_sample(const unsigned int *nshift, const unsigned int *nsample)
+{
+    std::mt19937_64 mt(seed);
+    const auto nk_irred = dos->kmesh_dos->nk_irred;
+    for (int i = 0; i < ntemp; ++i) {
+        if (temperature[i] < eps) {
+        } else {
+            if(vv_dim == "full" || vv_dim == "diagonal"){
+                for(int j=0;j<3;j++){
+                    for(int k=0;k<3;k++){
+                        if(vv_dim == "diagonal" && j != k)continue;
+
+                        if(map_sample_to_mode[i][j*3+k].size() < nshift[i]+nsample[i]){
+                            map_sample_to_mode[i][j*3+k].reserve(nshift[i]+nsample[i]);
+                        }
+                        
+                        //generate random values
+                        double* rand_val;
+                        allocate(rand_val, nsample[i]);
+                        std::uniform_real_distribution<> rand_gen(0, 1);
+                        
+                        double rand_max=weighting_factor_map[i][j*3+k][nk_irred*ns-1];  //upper limit of rand_val
+                        for(unsigned int mcid=0;mcid<nsample[i];mcid++){
+                            rand_val[mcid]=rand_gen(mt)*rand_max;
+                        }
+                        std::sort(rand_val,rand_val+nsample[i]);
+
+                        unsigned int tmp=0;
+                        for(unsigned int mcid=0;mcid<nsample[i];mcid++){
+                            for(int ib=tmp;ib<nk_irred*ns;ib++){
+                                if(rand_val[mcid] < weighting_factor_map[i][j*3+k][ib] || ib == nk_irred*ns-1){
+                                    tmp=ib;
+                                    break;
+                                }
+                            }
+                            map_sample_to_mode[i][j*3+k].push_back(tmp);
+                        }
+                    }
+                }
+            }else{
+                if(map_sample_to_mode[i][0].size() < nshift[i]+nsample[i]){
+                    map_sample_to_mode[i][0].reserve(nshift[i]+nsample[i]);
+                }
+                
+                //generate random values
+                double* rand_val;
+                allocate(rand_val, nsample[i]);
+                std::uniform_real_distribution<> rand_gen(0, 1);
+                
+                double rand_max=weighting_factor_map[i][0][nk_irred*ns-1];  //upper limit of rand_val
+                for(unsigned int mcid=0;mcid<nsample[i];mcid++){
+                    rand_val[mcid]=rand_gen(mt)*rand_max;
+                }
+                std::sort(rand_val,rand_val+nsample[i]);
+
+                unsigned int tmp=0;
+                for(unsigned int mcid=0;mcid<nsample[i];mcid++){
+                    for(int ib=tmp;ib<nk_irred*ns;ib++){
+                        if(rand_val[mcid] < weighting_factor_map[i][0][ib] || ib == nk_irred*ns-1){
+                            tmp=ib;
+                            break;
+                        }
+                    }
+                    map_sample_to_mode[i][0].push_back(tmp);
+                }
+            }
+        }
+    }
 }
 
 void Conductivity::calc_anharmonic_imagself()
@@ -804,6 +964,155 @@ void Conductivity::compute_kappa_intraband(const KpointMeshUniform *kmesh_in,
             std::cout << std::endl;
         }
         deallocate(kappa_err);
+    }
+}
+
+void PHON_NS::Conductivity::compute_kappa_intraband_with_mc(const KpointMeshUniform *kmesh_in,
+                                                            const double *const *eval_in,
+                                                            const double *const *lifetime,
+                                                            const int nshift_sample,
+                                                            double ***kappa_sample,
+                                                            double ***sample_error_tau,
+                                                            double ***sample_error_mc,
+                                                            double ***kappa_intra,
+                                                            double ***kappa_intra_error_tau_out,
+                                                            double ***kappa_intra_error_mc_out,
+                                                            double ***kappa_spec_out) const
+{
+    int i, is, ik;
+    //double ***kappa_sample;
+    const auto factor_toSI = 1.0e+18 / (std::pow(Bohr_in_Angstrom, 3) * system->volume_p);
+
+    const auto nk_irred = kmesh_in->nk_irred;
+    //allocate(kappa_sample, ntemp, 9, nsample_kappa);
+
+    for (i = 0; i < ntemp; ++i) {
+        for (unsigned int j = 0; j < 3; ++j) {
+            for (unsigned int k = 0; k < 3; ++k) {
+
+                if (temperature[i] < eps) {
+                    // Set kappa as zero when T = 0.
+                    for (int id_mc = nshift_sample; id_mc < nsample_kappa[i]; ++id_mc) {
+                        kappa_sample[i][3 * j + k][id_mc] = 0.0;
+                    }
+                } else {
+                    for (int id_mc = nshift_sample; id_mc < nsample_kappa[i]; ++id_mc) {
+                        
+                        if(map_sample_to_mode[i][3 * j + k][id_mc]<0)break;  //already sampling is finished
+                        ik = map_sample_to_mode[i][3 * j + k][id_mc]/ns;
+                        is = map_sample_to_mode[i][3 * j + k][id_mc]%ns;
+                        const auto knum = kmesh_in->kpoint_irred_all[ik][0].knum;
+                        const auto omega = eval_in[knum][is];
+                        auto vv_tmp = 0.0;
+                        const auto nk_equiv = kmesh_in->kpoint_irred_all[ik].size();
+
+                        // Accumulate group velocity (diad product) for the reducible k points
+                        for (auto ieq = 0; ieq < nk_equiv; ++ieq) {
+                            const auto ktmp = kmesh_in->kpoint_irred_all[ik][ieq].knum;
+                            vv_tmp += vel[ktmp][is][j] * vel[ktmp][is][k];
+                        }
+
+                        if (thermodynamics->classical) {
+                            kappa_sample[i][3 * j + k][id_mc]
+                                    = thermodynamics->Cv_classical(omega, temperature[i])
+                                        * vv_tmp * lifetime[ns * ik + is][i]
+                                        / weighting_factor_mc[i][3 * j + k][ns * ik + is];
+                        } else {
+                            kappa_sample[i][3 * j + k][id_mc]
+                                    = thermodynamics->Cv(omega, temperature[i])
+                                        * vv_tmp * lifetime[ns * ik + is][i]
+                                        / weighting_factor_mc[i][3 * j + k][ns * ik + is];
+                        }
+
+                        // Convert to SI unit
+                        kappa_sample[i][3 * j + k][id_mc] *= factor_toSI;
+
+                        //
+                        sample_error_mc[i][3 * j + k][id_mc] = kappa_sample[i][3 * j + k][id_mc]*kappa_sample[i][3 * j + k][id_mc];
+                        if(anharmonic_core->integration_method>0){
+                            sample_error_tau[i][3 * j + k][id_mc] = rel_err[ns * ik + is][i]*rel_err[ns * ik + is][i]
+                                                    *kappa_sample[i][3 * j + k][id_mc]*kappa_sample[i][3 * j + k][id_mc];
+                                                    //variance of kappa_sample
+
+                            //kappa_err[i][j][k] += rel_err[ns * ik + is][i]*std::abs(kappa_sample[i][3 * j + k][id_mc]);
+                            // calculate simple summation of standard error 
+                            // when there is a bias, this estimation is more reasonable
+                        }
+                    }
+                }
+
+                kappa_intra[i][j][k] = 0.0;
+                kappa_intra_error_mc_out[i][j][k]=0;
+                kappa_intra_error_tau_out[i][j][k]=0.0;
+
+                for (int id_mc = 0; id_mc < nsample_kappa[i]; ++id_mc) {
+                    if(map_sample_to_mode[i][3 * j + k][id_mc]<0)break;  //already sampling is finished
+                    ik = map_sample_to_mode[i][3 * j + k][id_mc]/ns;
+                    is = map_sample_to_mode[i][3 * j + k][id_mc]%ns;
+                    kappa_intra[i][j][k] += kappa_sample[i][3 * j + k][id_mc];
+                    kappa_intra_error_mc_out[i][j][k] += sample_error_mc[i][3 * j + k][id_mc];
+                    if(anharmonic_core->integration_method>0){
+                        kappa_intra_error_tau_out[i][j][k]+=sample_error_tau[i][3 * j + k][id_mc];
+                    }
+                }
+                if(kappa_intra[i][j][k] < 1.0e-100){
+                    kappa_intra_error_tau_out[i][j][k]=0;
+                    if(anharmonic_core->integration_method>0){
+                        kappa_intra_error_tau_out[i][j][k]=0;
+                    }
+                }else{
+                    kappa_intra_error_tau_out[i][j][k]=sqrt(kappa_intra_error_tau_out[i][j][k]/nsample_kappa[i]
+                                                         - pow(kappa_intra[i][j][k]/nsample_kappa[i],2))
+                                                         /(nsample_kappa[i]-1)
+                                                         /(kappa_intra[i][j][k]/nsample_kappa[i]);
+                    if(anharmonic_core->integration_method>0){
+                        kappa_intra_error_tau_out[i][j][k]=sqrt(kappa_intra_error_tau_out[i][j][k])/kappa_intra[i][j][k];
+                        // calculate relative deviation of kappa
+
+                        // kappa_err[i][j][k] = kappa_err[i][j][k]/kappa_intra[i][j][k];
+                        // calculate error due to bias
+                    }
+                }
+                kappa_intra[i][j][k] *= weighting_factor_map[i][3 * j + k][nk*ns-1];
+                kappa_intra[i][j][k] /= nsample_kappa[i];
+                kappa_intra[i][j][k] /= static_cast<double>(nk);
+            }
+        }
+    }
+
+    if (calc_kappa_spec) {/*
+        //allocate(kappa_spec_out, dos->n_energy, ntemp, 3);
+        compute_frequency_resolved_kappa_mc(ntemp,
+                                         integration->ismear,
+                                         dos->kmesh_dos,
+                                         dos->dymat_dos->get_eigenvalues(),
+                                         kappa_sample,
+                                         kappa_spec_out);*/
+    }
+
+    //deallocate(kappa_sample);
+    //std::cout << std::endl << "Thermal conductivity calculation is finished" << std::endl;
+    std::cout << " Calculated kappa : " << std::endl;
+    std::cout << " T [K] |kxx       |kxy       |kxz       |kyx       |kyy       |kyz       |kzx       |kzy       |kzz [%]    " << std::endl;
+    for (i = 0; i < ntemp; ++i) {
+        std::cout << "  " << std::setw(6) << std::fixed << static_cast<int>(temperature[i]);
+        for (unsigned int j = 0; j < 3; ++j) {
+            for (unsigned int k = 0; k < 3; ++k) {
+                std::cout << std::fixed << std::setw(10) << kappa_intra[i][j][k] << " ";
+            }
+        }
+        std::cout << std::endl;
+    }
+    std::cout << " Estimated error sigma_err : " << std::endl;
+    std::cout << " T [K] |kxx       |kxy       |kxz       |kyx       |kyy       |kyz       |kzx       |kzy       |kzz [%]    " << std::endl;
+    for (i = 0; i < ntemp; ++i) {
+        std::cout << "  " << std::setw(6) << std::fixed << static_cast<int>(temperature[i]);
+        for (unsigned int j = 0; j < 3; ++j) {
+            for (unsigned int k = 0; k < 3; ++k) {
+                std::cout << std::fixed << std::setw(10) << (kappa_intra_error_mc_out[i][j][k]+kappa_intra_error_tau_out[i][j][k])*100 << " ";
+            }
+        }
+        std::cout << std::endl;
     }
 }
 
