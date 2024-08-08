@@ -225,7 +225,7 @@ void Input::parse_general_vars()
     int calc_kappa_mc=0;
     double nsample_kappa_density=0.1;
     double coef_b=1.5;
-    int vv_dim = 4;  //full, sum, diagonal, diagonal_sum
+    int vv_dim = 3;  //full, sum, diagonal, diagonal_sum
     int nsample_kappa_ini=-1;
 
     // Assign given values

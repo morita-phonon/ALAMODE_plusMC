@@ -80,6 +80,14 @@ private:
                             unsigned int,
                             double ***,
                             double **) const;
+
+    void write_result_gamma_each(unsigned int,
+                            double ***,
+                            double **) const;
+
+    void write_result_err_each(unsigned int,
+                            double ***,
+                            double **) const;
                             
     void generate_nsample_kappa();
 
