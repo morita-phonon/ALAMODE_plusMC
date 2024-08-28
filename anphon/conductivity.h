@@ -27,6 +27,8 @@ public:
 
     void prepare_restart();
 
+    void setup_kappa_mc();
+
     void calc_anharmonic_imagself();
 
     void compute_kappa();
@@ -42,6 +44,19 @@ public:
 
     //store relative error of gamma
     double **rel_err;
+
+    //MC for kappa
+    unsigned int seed;
+    int calc_kappa_mc;  //0: full mode, 1: MC
+    double nsample_kappa_density;
+    int nsample_kappa_ini;
+    unsigned int *nsample_kappa;
+    double coef_b;
+    std::vector<std::vector<std::vector<unsigned int>>> map_sample_to_mode;  //[temperature][dim1*3+dim2][sample_id]
+    unsigned int *gamma_calculated;
+    double ***weighting_factor_mc;  //[temperature][dim1*3+dim2][ik*ns+is]
+    double ***weighting_factor_map;  //[temperature][dim1*3+dim2][ik*ns+is], accumulation of weighting_factor_mc
+    std::string vv_dim;  //"full","diagonal","diagonal_sum","xx"-"zz"
 
 private:
     void set_default_variables();
@@ -66,6 +81,22 @@ private:
                             double ***,
                             double **) const;
 
+    void write_result_gamma_each(unsigned int,
+                            double ***,
+                            double **) const;
+
+    void write_result_err_each(unsigned int,
+                            double ***,
+                            double **) const;
+                            
+    void generate_nsample_kappa();
+
+    void generate_kappa_mc_map(const KpointMeshUniform *kmesh_in, const double *const *eval_in);
+
+    void generate_kappa_mc_sample(const unsigned int *nshift, const unsigned int *nsample);
+    
+    void setup_vks_for_mc();
+
     void average_self_energy_at_degenerate_point(const int n,
                                                  const int m,
                                                  const KpointMeshUniform *kmesh_in,
@@ -83,6 +114,18 @@ private:
                                  const double *const *eval_in,
                                  const double *const *lifetime,
                                  double ***kappa_intra,
+                                 double ***kappa_spec_out) const;
+
+    void compute_kappa_intraband_with_mc(const KpointMeshUniform *kmesh_in,
+                                 const double *const *eval_in,
+                                 const double *const *lifetime,
+                                 const int nshift_sample,
+                                 double ***kappa_sample,
+                                 double ***sample_error_tau,
+                                 double ***sample_error_mc,
+                                 double ***kappa_intra,
+                                 double ***kappa_intra_error_tau_out,
+                                 double ***kappa_intra_error_mc_out,
                                  double ***kappa_spec_out) const;
 
     void compute_kappa_coherent(const KpointMeshUniform *kmesh_in,

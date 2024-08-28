@@ -113,7 +113,9 @@ void Input::parse_general_vars()
             "NKD", "KD", "MASS", "TRISYM", "PREC_EWALD", "CLASSICAL", "BCONNECT", "BORNSYM",
             "VERBOSITY",
             "MC_METHOD","SAMPLE","SAMPLE_DENSITY",
-            "CUTOFF","CUTOFF_SCALE"
+            "CUTOFF","CUTOFF_SCALE",
+            "KAPPA_MC","KAPPA_MC_DENSITY","KAPPA_MC_SAMPLE",
+            "COEF_B","VDIM"
     };
 
     std::vector<std::string> no_defaults{"PREFIX", "MODE", "FCSXML", "NKD", "KD"};
@@ -218,6 +220,14 @@ void Input::parse_general_vars()
     int cutoff_eps=0;
     double cutoff_eps_scale=2;
 
+    //for Monte Carlo kappa calculation
+    //        "COEF_B","VDIM"
+    int calc_kappa_mc=0;
+    double nsample_kappa_density=0.1;
+    double coef_b=1.5;
+    int vv_dim = 3;  //full, sum, diagonal, diagonal_sum
+    int nsample_kappa_ini=-1;
+
     // Assign given values
 
     assign_val(Tmin, "TMIN", general_var_dict);
@@ -263,6 +273,35 @@ void Input::parse_general_vars()
     assign_val(cutoff_eps, "CUTOFF", general_var_dict);
     if(cutoff_eps>0){
         assign_val(cutoff_eps_scale, "CUTOFF_SCALE", general_var_dict);
+    }
+
+    assign_val(calc_kappa_mc, "KAPPA_MC", general_var_dict);
+    assign_val(nsample_kappa_density, "KAPPA_MC_DENSITY", general_var_dict);
+    assign_val(nsample_kappa_ini, "KAPPA_MC_SAMPLE", general_var_dict);
+    assign_val(coef_b, "COEF_B", general_var_dict);
+    assign_val(vv_dim, "VDIM", general_var_dict);
+    //check
+    conductivity->calc_kappa_mc = calc_kappa_mc;
+    if(calc_kappa_mc > 0){
+        conductivity->nsample_kappa_density = nsample_kappa_density;
+        if(nsample_kappa_density <= 0 || nsample_kappa_density > 1){
+            if(nsample_kappa_ini<0){
+                exit("parse_general_vars", "please define KAPPA_MC_DENSITY or KAPPA_MC_SAMPLE");
+            }
+            conductivity->nsample_kappa_ini = nsample_kappa_ini;
+        }
+        conductivity->coef_b = coef_b;
+        if(vv_dim == 0){
+            conductivity->vv_dim = "full";
+        }else if(vv_dim == 1){
+            conductivity->vv_dim = "sum";
+        }else if(vv_dim == 2){
+            conductivity->vv_dim = "diagonal";
+        }else if(vv_dim == 3){
+            conductivity->vv_dim = "diagonal_sum";
+        }else{
+            exit("parse_general_vars", "not implemented VDIM is detected");
+        }
     }
 
     if (band_connection > 2) {
