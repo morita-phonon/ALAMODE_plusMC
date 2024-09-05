@@ -15,6 +15,7 @@
 #include <vector>
 #include <set>
 #include <complex>
+#include <random>
 
 namespace PHON_NS {
 class Conductivity : protected Pointers {
