@@ -67,7 +67,7 @@ void Integration::setup_integration()
 
     epsilon *= time_ry / Hz_to_kayser; // Convert epsilon to a.u.
     MPI_Bcast(&epsilon, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&cutoff_eps, 1, MPI::BOOL, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&cutoff_eps, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
     MPI_Bcast(&cutoff_eps_scale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 }
 
